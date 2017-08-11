@@ -1,13 +1,25 @@
 # The project language
 language: c
+sudo: false
 
-os:
-  - osx
-  - linux
-
-compiler:
-  - clang
-  - gcc
+matrix:
+  include:
+    - os: linux
+      compiler: gcc
+      env:
+        - ADDCFLAGS="-DOPENSSL_RUNTIME -rdynamic"
+        - ADDLDFLAGS="-ldl"
+    - os: osx
+      osx_image: xcode6.4
+      compiler: clang
+      env:
+        - ADDCFLAGS=
+        - ADDLDFLAGS=
+    - os: osx
+      compiler: clang
+      env:
+        - ADDCFLAGS="-DOPENSSL_RUNTIME -I/usr/local/opt/openssl/include"
+        - ADDLDFLAGS=
 
 addons:
   apt:
@@ -15,7 +27,7 @@ addons:
       - libssl-dev
 
 script:
-  - make
-  - make -C librhash test
+  - make ADDCFLAGS="$ADDCFLAGS" ADDLDFLAGS="$ADDLDFLAGS"
+  - make -C librhash test ADDCFLAGS="$ADDCFLAGS" ADDLDFLAGS="$ADDLDFLAGS"
   - librhash/test_hashes --flags
   - make test
