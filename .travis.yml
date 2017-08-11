@@ -1,30 +1,81 @@
 # The project language
 language: c
-sudo: false
 
 matrix:
   include:
     - os: linux
       compiler: gcc
+      sudo: false
       env:
         - ADDCFLAGS="-DOPENSSL_RUNTIME -rdynamic"
         - ADDLDFLAGS="-ldl"
+      addons:
+        apt:
+          packages:
+            - libssl-dev
+
+    - os: linux
+      compiler: gcc
+      sudo: false
+      script:
+        - make build-shared lib-shared
+        - make test-shared -C librhash
+        - LD_LIBRARY_PATH=librhash librhash/test_shared --flags
+        - make test-shared
+
     - os: osx
       osx_image: xcode6.4
       compiler: clang
+      sudo: false
       env:
         - ADDCFLAGS=
         - ADDLDFLAGS=
+
     - os: osx
       compiler: clang
+      sudo: false
       env:
         - ADDCFLAGS="-DOPENSSL_RUNTIME -I/usr/local/opt/openssl/include"
         - ADDLDFLAGS=
 
-addons:
-  apt:
-    packages:
-      - libssl-dev
+    - os: linux
+      compiler: arm-linux-gnueabi-gcc
+      sudo: required # enable FS with binfmt support
+      env:
+        - ADDCFLAGS=
+        - ADDLDFLAGS=-static
+      addons:
+        apt:
+          packages:
+            - gcc-arm-linux-gnueabi libc-dev-armel-cross
+            - qemu qemu-user-static binfmt-support
+
+    - os: linux
+      compiler: powerpc-linux-gnu-gcc
+      sudo: required
+      env:
+        - ADDCFLAGS=
+        - ADDLDFLAGS=-static
+      addons:
+        apt:
+          packages:
+            - gcc-powerpc-linux-gnu libc-dev-powerpc-cross
+            - qemu qemu-user-static binfmt-support
+
+    - os: linux
+      compiler: powerpc64-linux-gnu-gcc
+      sudo: required
+      env:
+        - ADDCFLAGS=
+        - ADDLDFLAGS=-static
+      addons:
+        apt:
+          sources:
+            - sourceline: 'deb http://archive.ubuntu.com/ubuntu/ zesty main universe'
+            - sourceline: 'deb http://archive.ubuntu.com/ubuntu/ zesty-updates main universe'
+          packages:
+            - gcc-powerpc64-linux-gnu libc6-dev-ppc64-cross
+            - qemu qemu-user-binfmt binfmt-support
 
 script:
   - make ADDCFLAGS="$ADDCFLAGS" ADDLDFLAGS="$ADDLDFLAGS"
