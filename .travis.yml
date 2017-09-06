@@ -32,11 +32,22 @@ matrix:
         - ADDLDFLAGS=
 
     - os: osx
+      osx_image: xcode7.3
       compiler: clang
       sudo: false
       env:
         - ADDCFLAGS="-DOPENSSL_RUNTIME -I/usr/local/opt/openssl/include"
         - ADDLDFLAGS=
+
+    - os: osx
+      compiler: clang
+      sudo: false
+      env:
+        - ADDCFLAGS="-DOPENSSL_RUNTIME -I/usr/local/opt/openssl/include"
+      script:
+        - make -C librhash dylib test-dylib ADDCFLAGS="$ADDCFLAGS"
+        - DYLD_LIBRARY_PATH=librhash librhash/test_dylib --flags
+        - make build-shared test-shared SHAREDLIB=librhash/librhash.0.dylib ADDCFLAGS="$ADDCFLAGS"
 
     - os: linux
       compiler: arm-linux-gnueabi-gcc
