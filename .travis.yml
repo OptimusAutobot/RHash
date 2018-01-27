@@ -7,8 +7,7 @@ matrix:
       compiler: gcc
       sudo: false
       env:
-        - ADDCFLAGS="-DOPENSSL_RUNTIME -rdynamic"
-        - ADDLDFLAGS="-ldl"
+        - CONFIGURE_FLAGS="--enable-static --enable-openssl-runtime"
       addons:
         apt:
           packages:
@@ -17,44 +16,34 @@ matrix:
     - os: linux
       compiler: gcc
       sudo: false
-      script:
-        - make build-shared lib-shared
-        - make test-shared -C librhash
-        - LD_LIBRARY_PATH=librhash librhash/test_shared --flags
-        - make test-shared
+      env:
+        - CONFIGURE_FLAGS="--disable-static --disable-openssl"
 
     - os: osx
       osx_image: xcode6.4
       compiler: clang
       sudo: false
       env:
-        - ADDCFLAGS=
-        - ADDLDFLAGS=
+        - CONFIGURE_FLAGS="--enable-static --disable-openssl"
 
     - os: osx
       osx_image: xcode7.3
       compiler: clang
       sudo: false
       env:
-        - ADDCFLAGS="-DOPENSSL_RUNTIME -I/usr/local/opt/openssl/include"
-        - ADDLDFLAGS=
+        - CONFIGURE_FLAGS="--enable-static --enable-openssl-runtime --extra-cflags=-I/usr/local/opt/openssl/include"
 
     - os: osx
       compiler: clang
       sudo: false
       env:
-        - ADDCFLAGS="-DOPENSSL_RUNTIME -I/usr/local/opt/openssl/include"
-      script:
-        - make -C librhash dylib test-dylib ADDCFLAGS="$ADDCFLAGS"
-        - DYLD_LIBRARY_PATH=librhash librhash/test_dylib --flags
-        - make build-shared test-shared SHAREDLIB=librhash/librhash.0.dylib ADDCFLAGS="$ADDCFLAGS"
+        - CONFIGURE_FLAGS="--disable-static --enable-openssl-runtime --extra-cflags=-I/usr/local/opt/openssl/include"
 
     - os: linux
       compiler: arm-linux-gnueabi-gcc
       sudo: required # enable FS with binfmt support
       env:
-        - ADDCFLAGS=
-        - ADDLDFLAGS=-static
+        - CONFIGURE_FLAGS="--enable-static --disable-openssl --disable-gettext"
       addons:
         apt:
           packages:
@@ -65,8 +54,7 @@ matrix:
       compiler: powerpc-linux-gnu-gcc
       sudo: required
       env:
-        - ADDCFLAGS=
-        - ADDLDFLAGS=-static
+        - CONFIGURE_FLAGS="--enable-static --disable-openssl --disable-gettext"
       addons:
         apt:
           packages:
@@ -77,19 +65,19 @@ matrix:
       compiler: powerpc64-linux-gnu-gcc
       sudo: required
       env:
-        - ADDCFLAGS=
-        - ADDLDFLAGS=-static
+        - CONFIGURE_FLAGS="--enable-static --disable-openssl --disable-gettext"
       addons:
         apt:
           sources:
-            - sourceline: 'deb http://archive.ubuntu.com/ubuntu/ zesty main universe'
-            - sourceline: 'deb http://archive.ubuntu.com/ubuntu/ zesty-updates main universe'
+            - sourceline: 'deb http://archive.ubuntu.com/ubuntu/ xenial main universe'
+            - sourceline: 'deb http://archive.ubuntu.com/ubuntu/ xenial-updates main universe'
           packages:
-            - gcc-powerpc64-linux-gnu libc6-dev-ppc64-cross
-            - qemu qemu-user-binfmt binfmt-support
+            - gcc-powerpc64-linux-gnu libc-dev-ppc64-cross
+            - qemu qemu-user-static binfmt-support
 
 script:
-  - make ADDCFLAGS="$ADDCFLAGS" ADDLDFLAGS="$ADDLDFLAGS"
-  - make -C librhash test ADDCFLAGS="$ADDCFLAGS" ADDLDFLAGS="$ADDLDFLAGS"
-  - librhash/test_hashes --flags
+  - ./configure --sysconfdir=/etc $CONFIGURE_FLAGS
+  - make
+  - test -f ./rhash || cat config.mak librhash/config.mak config.log
+  - make -C librhash print-info test
   - make test
