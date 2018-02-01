@@ -75,6 +75,20 @@ matrix:
             - gcc-powerpc64-linux-gnu libc-dev-ppc64-cross
             - qemu qemu-user-static binfmt-support
 
+    - os: linux
+      compiler: mips64el-linux-gnuabi64-gcc
+      sudo: required
+      env:
+        - CONFIGURE_FLAGS="--enable-static --disable-openssl --disable-gettext"
+      addons:
+        apt:
+          sources:
+            - sourceline: 'deb http://archive.ubuntu.com/ubuntu/ xenial main universe'
+            - sourceline: 'deb http://archive.ubuntu.com/ubuntu/ xenial-updates main universe'
+          packages:
+            - gcc-mips64el-linux-gnuabi64 libc-dev-mips64el-cross
+            - qemu qemu-user-static binfmt-support
+
 script:
   - ./configure --sysconfdir=/etc $CONFIGURE_FLAGS
   - make
