@@ -89,6 +89,38 @@ matrix:
             - gcc-mips64el-linux-gnuabi64 libc-dev-mips64el-cross
             - qemu qemu-user-static binfmt-support
 
+    - os: linux
+      compiler: i686-w64-mingw32-gcc
+      sudo: false
+      env:
+        - CONFIGURE_FLAGS="--target=i686-w64-mingw32 --enable-static --enable-lib-shared --disable-openssl --disable-gettext"
+      addons:
+        apt:
+          packages:
+            - dpkg gcc-mingw-w64-i686 wine1.6-i386
+      script:
+        - ./configure --sysconfdir=/etc $CONFIGURE_FLAGS
+        - make || ! cat config.mak librhash/config.mak config.log
+        - make -C librhash test_static.exe && wine librhash/test_static.exe --info
+        - wine librhash/test_static.exe
+        - make install DESTDIR=$PWD/results
+        - /usr/bin/find results/ -exec ls -ld '{}' ';'
+
+    - os: linux
+      compiler: x86_64-w64-mingw32-gcc
+      sudo: false
+      env:
+        - CONFIGURE_FLAGS="--target=x86_64-w64-mingw32 --enable-static --enable-lib-shared --disable-openssl --disable-gettext"
+      script:
+        - ./configure --sysconfdir=/etc $CONFIGURE_FLAGS
+        - make || ! cat config.mak librhash/config.mak config.log
+        - make -C librhash test_static.exe && wine librhash/test_static.exe --info
+        - wine librhash/test_static.exe
+      addons:
+        apt:
+          packages:
+            - dpkg gcc-mingw-w64-x86-64 wine1.6-amd64
+
 script:
   - ./configure --sysconfdir=/etc $CONFIGURE_FLAGS
   - make
