@@ -63,7 +63,7 @@ static int find_file_callback(file_t* file, int preprocess)
 	}
 
 	if (preprocess) {
-		if (!file_mask_match(opt.files_accept, file->path) ||
+		if (FILE_ISDATA(file) || !file_mask_match(opt.files_accept, file->path) ||
 			(opt.files_exclude && file_mask_match(opt.files_exclude, file->path)) ||
 			must_skip_file(file)) {
 			return 0;
@@ -77,37 +77,44 @@ static int find_file_callback(file_t* file, int preprocess)
 	} else {
 		int not_root = !(file->mode & FILE_IFROOT);
 
-		if (not_root) {
-			if ((opt.mode & (MODE_CHECK | MODE_UPDATE)) != 0) {
-				/* check and update modes use the crc_accept list */
-				if (!file_mask_match(opt.crc_accept, file->path)) {
-					return 0;
-				}
-			} else {
-				if (!file_mask_match(opt.files_accept, file->path) ||
-					(opt.files_exclude && file_mask_match(opt.files_exclude, file->path))) {
-					return 0;
+		if (!FILE_ISSPECIAL(file)) {
+			if (not_root) {
+				if ((opt.mode & (MODE_CHECK | MODE_UPDATE)) != 0) {
+					/* check and update modes use the crc_accept list */
+					if (!file_mask_match(opt.crc_accept, file->path)) {
+						return 0;
+					}
+				} else {
+					if (!file_mask_match(opt.files_accept, file->path) ||
+						(opt.files_exclude && file_mask_match(opt.files_exclude, file->path))) {
+						return 0;
+					}
 				}
 			}
+			if (must_skip_file(file))
+				return 0;
+		} else if (FILE_ISDATA(file) && (opt.mode & (MODE_CHECK | MODE_CHECK_EMBEDDED | MODE_UPDATE | MODE_TORRENT))) {
+			log_warning(_("skipping: %s\n"), file->path);
+			return 0;
 		}
-		if (must_skip_file(file)) return 0;
 
 		if (opt.mode & (MODE_CHECK | MODE_CHECK_EMBEDDED)) {
 			res = check_hash_file(file, not_root);
+		} else if (opt.mode & MODE_UPDATE) {
+			res = update_hash_file(file);
 		} else {
-			if (opt.mode & MODE_UPDATE) {
-				res = update_hash_file(file);
-			} else {
-				/* default mode: calculate hash */
-				const char* print_path = file->path;
-				if (print_path[0] == '.' && IS_PATH_SEPARATOR(print_path[1])) print_path += 2;
-				res = calculate_and_print_sums(rhash_data.out, file, print_path);
-				if (rhash_data.interrupted) return 0;
-				rhash_data.processed++;
-			}
+			/* default mode: calculate hash */
+			const char* print_path = file->path;
+			if (print_path[0] == '.' && IS_PATH_SEPARATOR(print_path[1]))
+				print_path += 2;
+			res = calculate_and_print_sums(rhash_data.out, file, print_path);
+			if (rhash_data.interrupted)
+				return 0;
+			rhash_data.processed++;
 		}
 	}
-	if (res < 0) rhash_data.error_flag = 1;
+	if (res < 0)
+		rhash_data.error_flag = 1;
 	return 1;
 }
 
@@ -136,13 +143,18 @@ static void ctrl_c_handler(int signum)
  */
 static int load_printf_template(void)
 {
-	FILE* fd = fopen(opt.template_file, "rb");
+	FILE* fd;
+	file_t file;
 	char buffer[8192];
 	size_t len;
 	int error = 0;
 
-	if (!fd) {
-		log_file_error(opt.template_file);
+	file_tinit(&file, opt.template_file, FILE_OPT_DONT_FREE_PATH);
+	fd = file_fopen(&file, FOpenRead | FOpenBin);
+	if (!fd)
+	{
+		log_file_t_error(&file);
+		file_cleanup(&file);
 		return 0;
 	}
 
@@ -154,17 +166,18 @@ static int load_printf_template(void)
 
 		rsh_str_append_n(rhash_data.template_text, buffer, len);
 		if (rhash_data.template_text->len >= MAX_TEMPLATE_SIZE) {
-			log_msg(_("%s: template file is too big\n"), opt.template_file);
+			log_msg(_("%s: template file is too big\n"), file_cpath(&file));
 			error = 1;
 		}
 	}
 
 	if (ferror(fd)) {
-		log_file_error(opt.template_file);
+		log_file_t_error(&file);
 		error = 1;
 	}
 
 	fclose(fd);
+	file_cleanup(&file);
 	rhash_data.printf_str = rhash_data.template_text->str;
 	return !error;
 }
@@ -308,8 +321,11 @@ int main(int argc, char *argv[])
 
 	if (!rhash_data.interrupted) {
 		if (opt.bt_batch_file && rhash_data.rctx) {
+			file_t batch_torrent_file;
+			file_tinit(&batch_torrent_file, opt.bt_batch_file, FILE_OPT_DONT_FREE_PATH);
+
 			rhash_final(rhash_data.rctx, 0);
-			save_torrent_to(opt.bt_batch_file, rhash_data.rctx);
+			save_torrent_to(&batch_torrent_file, rhash_data.rctx);
 		}
 
 		if ((opt.flags & OPT_SPEED) &&

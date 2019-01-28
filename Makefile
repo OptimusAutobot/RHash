@@ -3,7 +3,7 @@ include config.mak
 
 HEADERS = calc_sums.h hash_print.h common_func.h hash_update.h file.h file_mask.h file_set.h find_file.h hash_check.h output.h parse_cmdline.h rhash_main.h win_utils.h platform.h version.h
 SOURCES = calc_sums.c hash_print.c common_func.c hash_update.c file.c file_mask.c file_set.c find_file.c hash_check.c output.c parse_cmdline.c rhash_main.c win_utils.c
-OBJECTS = calc_sums.o hash_print.o common_func.o hash_update.o file.o file_mask.o file_set.o find_file.o hash_check.o output.o parse_cmdline.o rhash_main.o win_utils.o
+OBJECTS = $(SOURCES:.c=.o)
 WIN_DIST_FILES = dist/MD5.bat dist/magnet.bat dist/rhashrc.sample
 OTHER_FILES = configure Makefile ChangeLog INSTALL.md COPYING README \
   dist/rhash.spec.in dist/rhash.1 dist/rhash.1.win.sed \
@@ -85,8 +85,8 @@ install-conf:
 
 # dependencies should be properly set, otherwise 'make -j<n>' can fail
 install-symlinks: mkdir-bin install-man install-binary
-	cd $(BINDIR) && for f in $(SYMLINKS); do ln -fs $(RHASH_BINARY) $$f$(EXEC_EXT); done
-	cd $(MANDIR)/man1 && for f in $(SYMLINKS); do ln -fs rhash.1* $$f.1; done
+	cd $(BINDIR) && for f in $(SYMLINKS); do $(LN_S) $(RHASH_BINARY) $$f$(EXEC_EXT); done
+	cd $(MANDIR)/man1 && for f in $(SYMLINKS); do $(LN_S) rhash.1 $$f.1; done
 
 install-pkg-config:
 	$(INSTALL) -d $(PKGCONFIGDIR)
@@ -107,11 +107,14 @@ uninstall-pkg-config:
 uninstall-lib:
 	+cd librhash && $(MAKE) uninstall-lib
 
-install-lib-static: $(LIBRHASH_STATIC)
+install-lib-static: $(LIBRHASH_STATIC) install-lib-headers
 	+cd librhash && $(MAKE) install-lib-static
 
 install-lib-shared: $(LIBRHASH_SHARED)
 	+cd librhash && $(MAKE) install-lib-shared
+
+install-lib-headers:
+	+cd librhash && $(MAKE) install-lib-headers
 
 install-lib-so-link:
 	+cd librhash && $(MAKE) install-so-link
@@ -225,9 +228,6 @@ dist/rhash.1.html: dist/rhash.1
 dist/rhash.1.txt: dist/rhash.1
 	-which groff &>/dev/null && (groff -t -e -mandoc -Tascii dist/rhash.1 | sed -e 's/.\[[0-9]*m//g' > $@)
 
-cpp-doc:
-	cppdoc_cmd -title=RHash -company=Akademgorodok -classdir=classdoc -module="cppdoc-standard" -overwrite -extensions="c,h" -languages="c=cpp,h=cpp" -generate-deprecations-list=false $(SOURCES) $(HEADERS) ./Documentation/CppDoc/index.html
-
 permissions:
 	find . dist librhash po win32 win32/vc-2010 -maxdepth 1 -type f -exec chmod -x '{}' \;
 	chmod +x configure tests/test_rhash.sh
@@ -309,7 +309,7 @@ update-po:
 compile-gmo:
 	for f in $(I18N_FILES); do \
 		g=`basename $$f .po`; \
-		msgfmt $$f -o po/$$g.gmo; \
+		msgfmt -o po/$$g.gmo $$f; \
 	done
 
 install-gmo: compile-gmo
@@ -327,8 +327,8 @@ uninstall-gmo:
 .PHONY: all build-shared build-static lib-shared lib-static clean clean-bindings distclean clean-local \
 	test test-shared test-static test-lib test-libs test-lib-shared test-lib-static \
 	install build-install-binary install-binary install-lib-shared install-lib-static \
-	install-lib-so-link install-conf install-data install-gmo install-man \
+	install-lib-headers install-lib-so-link install-conf install-data install-gmo install-man \
 	install-symlinks install-pkg-config uninstall-gmo uninstall-pkg-config \
 	uninstall uninstall-binary uninstall-data uninstall-lib uninstall-symlinks \
-	print-info check copy-dist update-po compile-gmo cpp-doc mkdir-bin permissions \
+	print-info check copy-dist update-po compile-gmo mkdir-bin permissions \
 	bzip dgz dist dist-full gzip gzip-bindings gzip-full rpm win-dist zip

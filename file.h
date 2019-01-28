@@ -34,7 +34,6 @@ char* make_path(const char* dir, const char* filename);
 int are_paths_equal(ctpath_t a, ctpath_t b);
 
 int is_regular_file(const char* path); /* shall be deprecated */
-int if_file_exists(const char* path);
 
 /**
  * Portable file information.
@@ -45,6 +44,7 @@ typedef struct file_t
 #ifdef _WIN32
 	wchar_t* wpath;
 #endif
+	char* data;
 	uint64_t size;
 	uint64_t mtime;
 	unsigned mode;
@@ -61,19 +61,25 @@ typedef struct file_t
 #define FILE_IFLNK   0x02
 #define FILE_IFREG   0x04
 #define FILE_IFROOT  0x10
-#define FILE_IFSTDIN 0x20
+#define FILE_IFDATA  0x20
 #define FILE_IFLIST  0x40
+#define FILE_IFSTDIN 0x80
+#define FILE_IFSPEC_MASK (FILE_IFDATA | FILE_IFLIST | FILE_IFSTDIN)
 #define FILE_OPT_DONT_FREE_PATH  0x200
 #define FILE_OPT_DONT_FREE_WPATH 0x400
 
-#define FILE_ISDIR(file) ((file)->mode & FILE_IFDIR)
-#define FILE_ISLNK(file) ((file)->mode & FILE_IFLNK)
-#define FILE_ISREG(file) ((file)->mode & FILE_IFREG)
+#define FILE_ISDIR(file)   ((file)->mode & FILE_IFDIR)
+#define FILE_ISLNK(file)   ((file)->mode & FILE_IFLNK)
+#define FILE_ISREG(file)   ((file)->mode & FILE_IFREG)
+#define FILE_ISDATA(file)  ((file)->mode & FILE_IFDATA)
+#define FILE_ISLIST(file)  ((file)->mode & FILE_IFLIST)
+#define FILE_ISSTDIN(file) ((file)->mode & FILE_IFSTDIN)
+#define FILE_ISSPECIAL(file) ((file)->mode & (FILE_IFSPEC_MASK))
 
 /* file functions */
 void file_init(file_t* file, const char* path, int finit_flags);
 void file_cleanup(file_t* file);
-void file_path_append(file_t* dst, file_t* src, const char* suffix);
+void file_path_append(file_t* dst, const file_t* src, const char* suffix);
 
 enum FileStatModes {
 	FNoMode    = 0,
@@ -89,14 +95,19 @@ enum FileFOpenModes {
 	FOpenMask  = 7
 };
 FILE* file_fopen(file_t* file, int fopen_flags);
+FILE* rsh_tfopen(ctpath_t tpath, file_tchar* tmode);
+
 int file_rename(file_t* from, file_t* to);
+int file_move_to_bak(file_t* file);
 
 #ifdef _WIN32
-FILE* rsh_tfopen(ctpath_t tpath, file_tchar* tmode);
+void file_tinit(file_t* file, ctpath_t tpath, int finit_flags);
+const char* file_cpath(file_t* file);
 int file_is_write_locked(file_t* file);
 #else
+# define file_tinit(file, tpath, finit_flags) file_init(file, tpath, finit_flags)
+# define file_cpath(file) ((const char*)(file)->path)
 # define file_is_write_locked(f) (0)
-# define rsh_tfopen(tpath, tmode) fopen(tpath, tmode)
 #endif
 
 typedef struct file_list_t {
@@ -107,6 +118,30 @@ typedef struct file_list_t {
 int  file_list_open(file_list_t* list, file_t* file_path);
 int  file_list_read(file_list_t* list);
 void file_list_close(file_list_t* list);
+
+#ifdef _WIN32
+/* readdir structures and functions */
+#define DIR WIN_DIR
+#define dirent win_dirent
+#define opendir  win_opendir
+#define readdir  win_readdir
+#define closedir win_closedir
+
+/* dirent struct for windows to traverse directory content */
+struct win_dirent {
+	char*     d_name;   /* file name */
+	wchar_t*  d_wname;  /* file name in Unicode (UTF-16) */
+	int       d_isdir;  /* non-zero if file is a directory */
+};
+
+struct WIN_DIR_t;
+typedef struct WIN_DIR_t WIN_DIR;
+
+WIN_DIR* win_opendir(const char*);
+WIN_DIR* win_wopendir(const wchar_t*);
+struct win_dirent* win_readdir(WIN_DIR*);
+void win_closedir(WIN_DIR*);
+#endif
 
 #ifdef __cplusplus
 } /* extern "C" */

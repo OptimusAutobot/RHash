@@ -74,7 +74,7 @@ struct options_t
 	unsigned openssl_mask;  /* bit-mask for enabled OpenSSL hash functions */
 	const char* config_file; /* config file path */
 	char* printf_str;        /* printf-like format */
-	char* template_file; /* printf-like template file path */
+	opt_tchar* template_file; /* printf-like template file path */
 	opt_tchar* output;       /* file to output calculation or checking results to */
 	opt_tchar* log;          /* file to log percents and other info to */
 	char* embed_crc_delimiter;
@@ -85,7 +85,7 @@ struct options_t
 	struct vector_t *crc_accept;   /* suffixes of crc files to verify or update */
 	struct vector_t * bt_announce; /* BitTorrent announce URL */
 	size_t bt_piece_length; /* BitTorrent piece length */
-	char*  bt_batch_file;   /* path to save a batch torrent to */
+	opt_tchar*  bt_batch_file;   /* path to save a batch torrent to */
 
 	char** argv;
 	int has_files; /* flag: command line contain files */

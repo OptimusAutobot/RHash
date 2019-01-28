@@ -10,9 +10,9 @@ rhash \- calculate/check CRC32, MD5, SHA1, GOST, TTH, BTIH or other hash sums.
 .SH DESCRIPTION
 .B RHash
 (Recursive Hasher)
-computes and verifies various message digests (hash sums) of files.
-Supported message digests include CRC32, MD4, MD5, SHA1, SHA256, SHA512,
-SHA3, Tiger, DC++ TTH, BitTorrent BTIH, AICH, ED2K, GOST R 34.11\-94,
+computes and verifies various message digests (hash sums) of files or
+strings. Supported message digests include CRC32, CRC32C, MD4, MD5, SHA1,
+SHA256, SHA512, SHA3, Tiger, DC++ TTH, BTIH, AICH, ED2K, GOST R 34.11\-94,
 RIPEMD\-160, HAS\-160, EDON\-R 256/512, Whirlpool, Snefru\-128/256.
 
 The program can create and verify Magnet links 
@@ -27,11 +27,11 @@ The format can be changed by options \-\-bsd, \-\-magnet, \-\-simple,
 \-\-printf, \-\-template.
 To output all sums use the `\-a' option.
 
-The default output format can also be changed by renaming the program or
-placing a hardlink/symlink to it with a name containing strings `crc32',
-`md4', `md5', `sha1', `sha256' `sha512', `tiger', `tth', `btih', `aich',
-`ed2k', `ed2k\-link', `gost', `gost\-cryptopro', `ripemd160', `has160',
-`whirlpool', `edonr256', `edonr512', `snefru128', `snefru256',
+The default output format can be changed by renaming the program or placing
+a hardlink/symlink to it with a filename containing strings `crc32',
+`crc32c', `md4', `md5', `sha1', `sha256' `sha512', `tiger', `tth', `btih',
+`aich', `ed2k', `ed2k\-link', `gost', `gost\-cryptopro', `ripemd160',
+`has160', `whirlpool', `edonr256', `edonr512', `snefru128', `snefru256',
 `sfv' or `magnet'.
 
 .SH PROGRAM MODE OPTIONS
@@ -64,6 +64,8 @@ Run benchmark for selected algorithm(s).
 .SH HASH SUMS OPTIONS
 .IP "\-C, \-\-crc32"
 CRC32: calculate and print CRC32 hash sum.
+.IP "\-\-crc32c"
+CRC32C: calculate and print CRC32C hash sum.
 .IP "\-\-md4"
 MD4: calculate and print MD4 hash sum.
 .IP "\-M, \-\-md5"
@@ -112,8 +114,11 @@ List names of all supported hashes, one per line.
 .IP "\-r, \-\-recursive"
 Recursively process directories, specified by command line.
 .IP "\-\-file\-list=<file>"
-Process a file-list. File-list is a text file, containing paths to files,
-one path per line.
+Process given file as a file-list. Lines of this file are
+interpreted as paths to files to be processed. Multiple
+file lists can be specified at command line.
+.IP "\-m, \-\-message=<text>"
+Calculate hash sums of the text message.
 .IP "\-\-follow"
 Follow symbolic links when processing directories recursively.
 .IP "\-v, \-\-verbose"
@@ -186,7 +191,7 @@ so they will not look like options anymore.
 Print hash sums in the SFV (Simple File Verification) output format (default). 
 But unlike common SFV file, not only CRC32, but any hash sums specified
 by options can be printed.
-.IP "\-m, \-\-magnet"
+.IP "\-g, \-\-magnet"
 Print hash sums formatted as magnet links.
 .IP "\-\-bsd"
 Use BSD output format. Each hash sum is printed on separate line
@@ -269,7 +274,7 @@ base64 or raw (binary) format respectively, e.g. %b{md4}, %BH or %xT.
 
 .SH CONFIG FILE
 RHash looks for a config file
-at $HOME/.rhashrc and /etc/rhashrc.
+at $XDG_CONFIG_HOME/rhash/rhashrc, $HOME/.rhashrc and /etc/rhashrc.
 
 The config file consists of lines formatted as
 .RS 

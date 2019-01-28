@@ -514,7 +514,7 @@ void free_print_list(print_item* list)
  */
 void init_hash_info_table(void)
 {
-	unsigned index, bit;
+	unsigned bit;
 	unsigned short_opt_mask = RHASH_CRC32 | RHASH_MD5 | RHASH_SHA1 | RHASH_TTH | RHASH_ED2K |
 		RHASH_AICH | RHASH_WHIRLPOOL | RHASH_RIPEMD160 | RHASH_GOST | OPT_ED2K_LINK;
 	char* short_opt = "cmhteawrgl";
@@ -523,9 +523,12 @@ void init_hash_info_table(void)
 
 	memset(hash_info_table, 0, sizeof(hash_info_table));
 
-	for (index = 0, bit = 1; bit <= fullmask; index++, bit = bit << 1, info++) {
+	for (bit = 1; bit <= fullmask; bit = bit << 1) {
 		const char *p;
 		char *e, *d;
+
+		if (!(bit & fullmask))
+			continue;
 
 		info->short_char = ((bit & short_opt_mask) != 0 && *short_opt ?
 			*(short_opt++) : 0);
@@ -551,6 +554,7 @@ void init_hash_info_table(void)
 			}
 		}
 		*d = 0;
+		++info;
 	}
 }
 
@@ -669,12 +673,8 @@ int print_sfv_header_line(FILE* out, file_t* file, const char* printpath)
 	/* skip stdin stream */
 	if ((file->mode & FILE_IFSTDIN) != 0) return 0;
 
-#ifdef _WIN32
 	/* skip file if it can't be opened with exclusive sharing rights */
-	if (!can_open_exclusive(file->path)) {
-		return 0;
-	}
-#endif
+	if (file_is_write_locked(file)) return 0;
 
 	if (!printpath) printpath = file->path;
 	if (printpath[0] == '.' && IS_PATH_SEPARATOR(printpath[1])) printpath += 2;

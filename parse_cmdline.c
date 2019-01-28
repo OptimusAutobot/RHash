@@ -11,6 +11,7 @@
 
 #include "parse_cmdline.h"
 #include "common_func.h"
+#include "file.h"
 #include "file_mask.h"
 #include "find_file.h"
 #include "hash_print.h"
@@ -58,6 +59,7 @@ static void print_help(void)
 	print_help_line("  -V, --version ", _("Print program version and exit.\n"));
 	print_help_line("  -h, --help    ", _("Print this help screen.\n"));
 	print_help_line("  -C, --crc32   ", _("Calculate CRC32 hash sum.\n"));
+	print_help_line("      --crc32c  ", _("Calculate CRC32C hash sum.\n"));
 	print_help_line("      --md4     ", _("Calculate MD4   hash sum.\n"));
 	print_help_line("  -M, --md5     ", _("Calculate MD5   hash sum.\n"));
 	print_help_line("  -H, --sha1    ", _("Calculate SHA1  hash sum.\n"));
@@ -85,6 +87,7 @@ static void print_help(void)
 	print_help_line("  -v, --verbose ", _("Be verbose.\n"));
 	print_help_line("  -r, --recursive  ", _("Process directories recursively.\n"));
 	print_help_line("      --file-list=<file> ", _("Process a list of files.\n"));
+	print_help_line("  -m, --message=<text> ", _("Process the text message.\n"));
 	print_help_line("      --skip-ok ", _("Don't print OK messages for successfully verified files.\n"));
 	print_help_line("  -i, --ignore-case  ", _("Ignore case of filenames when updating hash files.\n"));
 	print_help_line("      --percents   ", _("Show percents, while calculating or checking hashes.\n"));
@@ -97,7 +100,7 @@ static void print_help(void)
 	print_help_line("      --sfv     ", _("Print hash sums, using SFV format (default).\n"));
 	print_help_line("      --bsd     ", _("Print hash sums, using BSD-like format.\n"));
 	print_help_line("      --simple  ", _("Print hash sums, using simple format.\n"));
-	print_help_line("  -m, --magnet  ", _("Print hash sums  as magnet links.\n"));
+	print_help_line("  -g, --magnet  ", _("Print hash sums  as magnet links.\n"));
 	print_help_line("      --torrent ", _("Create torrent files.\n"));
 #ifdef _WIN32
 	print_help_line("      --ansi    ", _("Use Windows codepage for output (Windows only).\n"));
@@ -128,16 +131,16 @@ enum file_suffix_type {
 };
 
 /**
- * Add a file-list.
+ * Add a special file.
  *
  * @param o pointer to the options structure to update
- * @param path the path to the file-list
+ * @param path the path of the file
  * @param type the type of the option
  */
-static void add_file_list(options_t *o, tstr_t path, unsigned is_file_list)
+static void add_special_file(options_t *o, tstr_t path, unsigned file_mode)
 {
 	if (o->search_data) {
-		file_search_add_file(o->search_data, path, is_file_list);
+		file_search_add_file(o->search_data, path, file_mode);
 		opt.has_files = 1;
 	}
 }
@@ -313,12 +316,13 @@ enum option_type_t
 	F_UFLG = 1, /* set a bit flag in a uint32_t field */
 	F_UENC = F_UFLG | F_OUTPUT_OPT, /* an encoding changing option */
 	F_CSTR = 2 | F_NEED_PARAM, /* store parameter as a C string */
-	F_TOUT = 3 | F_NEED_PARAM | F_OUTPUT_OPT,
-	F_VFNC = 4, /* just call a function */
-	F_PFNC = 5 | F_NEED_PARAM, /* process option parameter by calling a handler */
-	F_TFNC = 6 | F_NEED_PARAM, /* process option parameter by calling a handler */
-	F_UFNC = 7 | F_NEED_PARAM, /* pass UTF-8 encoded parameter to the handler */
-	F_PRNT = 8, /* print a constant C-string and exit */
+	F_TSTR = 3 | F_NEED_PARAM, /* store parameter as a tstr_t */
+	F_TOUT = 4 | F_NEED_PARAM | F_OUTPUT_OPT,
+	F_VFNC = 5, /* just call a function */
+	F_PFNC = 6 | F_NEED_PARAM, /* process option parameter by calling a handler */
+	F_TFNC = 7 | F_NEED_PARAM, /* process option parameter by calling a handler */
+	F_UFNC = 8 | F_NEED_PARAM, /* pass UTF-8 encoded parameter to the handler */
+	F_PRNT = 9, /* print a constant C-string and exit */
 };
 
 #define is_param_required(option_type) ((option_type) & F_NEED_PARAM)
@@ -340,6 +344,7 @@ cmdline_opt_t cmdline_opt[] =
 	/* hash sums options */
 	{ F_UFLG, 'a',   0, "all",    &opt.sum_flags, RHASH_ALL_HASHES },
 	{ F_UFLG, 'C',   0, "crc32",  &opt.sum_flags, RHASH_CRC32 },
+	{ F_UFLG,   0,   0, "crc32c", &opt.sum_flags, RHASH_CRC32C },
 	{ F_UFLG,   0,   0, "md4",    &opt.sum_flags, RHASH_MD4 },
 	{ F_UFLG, 'M',   0, "md5",    &opt.sum_flags, RHASH_MD5 },
 	{ F_UFLG, 'H',   0, "sha1",   &opt.sum_flags, RHASH_SHA1 },
@@ -371,15 +376,16 @@ cmdline_opt_t cmdline_opt[] =
 	{ F_UFLG,   0,   0, "sfv",     &opt.fmt, FMT_SFV },
 	{ F_UFLG,   0,   0, "bsd",     &opt.fmt, FMT_BSD },
 	{ F_UFLG,   0,   0, "simple",  &opt.fmt, FMT_SIMPLE },
-	{ F_UFLG, 'm',   0, "magnet",  &opt.fmt, FMT_MAGNET },
+	{ F_UFLG, 'g',   0, "magnet",  &opt.fmt, FMT_MAGNET },
 	{ F_UFLG,   0,   0, "uppercase", &opt.flags, OPT_UPPERCASE },
 	{ F_UFLG,   0,   0, "lowercase", &opt.flags, OPT_LOWERCASE },
-	{ F_CSTR,   0,   0, "template",  &opt.template_file, 0 },
+	{ F_TSTR,   0,   0, "template",  &opt.template_file, 0 },
 	{ F_CSTR, 'p',   0, "printf",  &opt.printf_str, 0 },
 
 	/* other options */
 	{ F_UFLG, 'r', 'R', "recursive", &opt.flags, OPT_RECURSIVE },
-	{ F_TFNC,   0,   0, "file-list", add_file_list, 1 },
+	{ F_TFNC, 'm',   0, "message", add_special_file, FILE_IFDATA },
+	{ F_TFNC,   0,   0, "file-list", add_special_file, FILE_IFLIST },
 	{ F_UFLG,   0,   0, "follow",  &opt.flags, OPT_FOLLOW },
 	{ F_UFLG, 'v',   0, "verbose", &opt.flags, OPT_VERBOSE },
 	{ F_UFLG,   0,   0, "gost-reverse", &opt.flags, OPT_GOST_REVERSE },
@@ -401,7 +407,7 @@ cmdline_opt_t cmdline_opt[] =
 	{ F_UFLG,   0,   0, "bt-private", &opt.flags, OPT_BT_PRIVATE },
 	{ F_PFNC,   0,   0, "bt-piece-length", set_bt_piece_length, 0 },
 	{ F_UFNC,   0,   0, "bt-announce", bt_announce, 0 },
-	{ F_CSTR,   0,   0, "bt-batch", &opt.bt_batch_file, 0 },
+	{ F_TSTR,   0,   0, "bt-batch", &opt.bt_batch_file, 0 },
 	{ F_UFLG,   0,   0, "benchmark-raw", &opt.flags, OPT_BENCH_RAW },
 	{ F_PFNC,   0,   0, "openssl", openssl_flags, 0 },
 
@@ -412,7 +418,7 @@ cmdline_opt_t cmdline_opt[] =
 #endif
 	{ 0,0,0,0,0,0 }
 };
-cmdline_opt_t cmdline_file = { F_TFNC, 0, 0, "FILE", add_file_list, 0 };
+cmdline_opt_t cmdline_file = { F_TFNC, 0, 0, "FILE", add_special_file, 0 };
 
 /**
  * Log a message and exit the program.
@@ -465,7 +471,7 @@ static void apply_option(options_t *opts, parsed_option_t* option)
 		}
 
 #ifdef _WIN32
-		if (option_type == F_TOUT || option_type == F_TFNC) {
+		if (option_type == F_TOUT || option_type == F_TFNC || option_type == F_TSTR) {
 			/* leave the value in UTF-16 */
 			value = (char*)rsh_wcsdup((wchar_t*)option->parameter);
 		}
@@ -489,6 +495,7 @@ static void apply_option(options_t *opts, parsed_option_t* option)
 		*(unsigned*)((char*)opts + ((char*)o->ptr - (char*)&opt)) |= o->param;
 		break;
 	case F_CSTR:
+	case F_TSTR:
 	case F_TOUT:
 		/* save the option parameter */
 		*(char**)((char*)opts + ((char*)o->ptr - (char*)&opt)) = value;
@@ -526,7 +533,18 @@ static const char* find_conf_file(void)
 	char *dir1, *path;
 
 #ifndef _WIN32 /* Linux/Unix part */
-	/* first check for $HOME/.rhashrc file */
+	/* first check for $XDG_CONFIG_HOME/rhash/rhashrc file */
+	if ( (dir1 = getenv("XDG_CONFIG_HOME")) ) {
+		dir1 = make_path(dir1, "rhash");
+		path = make_path(dir1, CONFIG_FILENAME);
+		free(dir1);
+		if (is_regular_file(path)) {
+			rsh_vector_add_ptr(opt.mem, path);
+			return (conf_opt.config_file = path);
+		}
+		free(path);
+	}
+	/* then check for $HOME/.rhashrc file */
 	if ( (dir1 = getenv("HOME")) ) {
 		path = make_path(dir1, ".rhashrc");
 		if (is_regular_file(path)) {
@@ -592,6 +610,7 @@ static int read_config(void)
 {
 #define LINE_BUF_SIZE 2048
 	char buf[LINE_BUF_SIZE];
+	file_t file;
 	FILE* fd;
 	parsed_option_t option;
 	int res;
@@ -602,7 +621,9 @@ static int read_config(void)
 
 	if (!find_conf_file()) return 0;
 
-	fd = fopen(conf_opt.config_file, "r");
+	file_init(&file, conf_opt.config_file, FILE_OPT_DONT_FREE_PATH);
+	fd = file_fopen(&file, FOpenRead);
+	file_cleanup(&file);
 	if (!fd) return -1;
 
 	while (fgets(buf, LINE_BUF_SIZE, fd)) {
@@ -919,7 +940,8 @@ static void set_default_sums_flags(const char* progName)
 	/* convert progName to lowercase */
 	buf = str_tolower(progName);
 
-	if (strstr(buf, "crc32")) res |= RHASH_CRC32;
+	if (strstr(buf, "crc32c")) res |= RHASH_CRC32C;
+	else if (strstr(buf, "crc32")) res |= RHASH_CRC32;
 	if (strstr(buf, "md4"))   res |= RHASH_MD4;
 	if (strstr(buf, "md5"))   res |= RHASH_MD5;
 	if (strstr(buf, "sha1"))  res |= RHASH_SHA1;
@@ -935,8 +957,8 @@ static void set_default_sums_flags(const char* progName)
 	if (strstr(buf, "tth"))   res |= RHASH_TTH;
 	if (strstr(buf, "btih"))  res |= RHASH_BTIH;
 	if (strstr(buf, "aich"))  res |= RHASH_AICH;
-	if (strstr(buf, "gost"))  res |= RHASH_GOST;
 	if (strstr(buf, "gost-cryptopro"))  res |= RHASH_GOST_CRYPTOPRO;
+	else if (strstr(buf, "gost"))  res |= RHASH_GOST;
 	if (strstr(buf, "has160"))  res |= RHASH_HAS160;
 	if (strstr(buf, "ripemd160"))  res |= RHASH_RIPEMD160;
 	if (strstr(buf, "whirlpool"))  res |= RHASH_WHIRLPOOL;
@@ -954,7 +976,8 @@ static void set_default_sums_flags(const char* progName)
 
 	/* change program flags only if opt.sum_flags was not set */
 	if (!opt.sum_flags) {
-		opt.sum_flags = (res ? res : (opt.fmt == FMT_MAGNET ? RHASH_TTH | RHASH_ED2K | RHASH_AICH : RHASH_CRC32));
+		opt.sum_flags = (res ? res : (opt.fmt == FMT_MAGNET ? RHASH_TTH | RHASH_ED2K | RHASH_AICH :
+			(!(opt.mode & MODE_CHECK) ? RHASH_CRC32 : 0)));
 	}
 }
 

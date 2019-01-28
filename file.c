@@ -18,7 +18,9 @@
 
 #if defined( _WIN32) || defined(__CYGWIN__)
 # include <windows.h>
+#if !defined(__CYGWIN__)
 # include <share.h> /* for _SH_DENYWR */
+#endif
 # include <fcntl.h>  /* _O_RDONLY, _O_BINARY */
 # include <io.h>
 #endif
@@ -146,36 +148,61 @@ int is_regular_file(const char* path)
 	return is_regular;
 }
 
-/**
- * Check if a file exists at the specified path.
- *
- * @param path the path to check
- * @return 1 if file exists, 0 otherwise.
- */
-int if_file_exists(const char* path)
-{
-	int exists;
-	file_t file;
-	file_init(&file, path, FILE_OPT_DONT_FREE_PATH);
-	exists = (file_stat(&file, 0) >= 0);
-	file_cleanup(&file);
-	return exists;
-}
-
 /*=========================================================================
  * file_t functions
  *=========================================================================*/
 
-void file_init(file_t* file, const char* path, int finit_flags)
+/**
+ * Initialize file_t structure, associating it with the given file path.
+ *
+ * @param file the file_t structure to initialize
+ * @param path the file path
+ * @param init_flags initialization flags
+ */
+void file_init(file_t* file, const char* path, int init_flags)
 {
 	memset(file, 0, sizeof(*file));
-	if ((finit_flags & FILE_OPT_DONT_FREE_PATH) != 0) {
+	file->mode = (unsigned)init_flags;
+	if ((init_flags & FILE_OPT_DONT_FREE_PATH) != 0) {
 		file->path = (char*)path;
-		file->mode = (unsigned)finit_flags;
 	} else {
 		file->path = rsh_strdup(path);
 	}
 }
+
+#ifdef _WIN32
+/**
+ * Initialize file_t structure, associating it with the given file path.
+ *
+ * @param file the file_t structure to initialize
+ * @param tpath the file path
+ * @param init_flags initialization flags
+ */
+void file_tinit(file_t* file, ctpath_t tpath, int init_flags)
+{
+	memset(file, 0, sizeof(*file));
+	file->mode = (unsigned)init_flags & ~FILE_OPT_DONT_FREE_PATH;
+	if ((init_flags & FILE_OPT_DONT_FREE_PATH) != 0) {
+		file->wpath = (wchar_t*)tpath;
+		file->mode |= FILE_OPT_DONT_FREE_WPATH;
+	} else {
+		file->wpath = rsh_wcsdup(tpath);
+	}
+}
+
+/**
+ * Get the path of the file as a c-string.
+ * On Windows lossy unicode conversion can be applied.
+ *
+ * @param file the file to get the path
+ * @return the path of the file
+ */
+const char* file_cpath(file_t* file)
+{
+	if (!file->path && file->wpath) file->path = w2c(file->wpath);
+	return file->path;
+}
+#endif
 
 /**
  * Free the memory allocated by the fields of the file_t structure.
@@ -194,7 +221,10 @@ void file_cleanup(file_t* file)
 	file->wpath = NULL;
 #endif /* _WIN32 */
 
-	file->mtime = file->size = 0;
+	free(file->data);
+	file->data = NULL;
+	file->mtime = 0;
+	file->size = 0;
 	file->mode = 0;
 }
 
@@ -205,16 +235,18 @@ void file_cleanup(file_t* file)
  * @param src the path to append the suffix to
  * @param suffix the suffix to append
  */
-void file_path_append(file_t* dst, file_t* src, const char* suffix)
+void file_path_append(file_t* dst, const file_t* src, const char* suffix)
 {
+	size_t src_len;
+	size_t dst_len;
 	memset(dst, 0, sizeof(*dst));
 #ifdef _WIN32
 	if (src->wpath)
 	{
 		wchar_t* wsuffix = c2w(suffix, 0);
 		assert(wsuffix != 0);
-		size_t src_len = wcslen(src->wpath);
-		size_t dst_len = src_len + wcslen(wsuffix) + 1;
+		src_len = wcslen(src->wpath);
+		dst_len = src_len + wcslen(wsuffix) + 1;
 		dst->wpath = (wchar_t*)rsh_malloc(dst_len * sizeof(wchar_t));
 		wcscpy(dst->wpath, src->wpath);
 		wcscpy(dst->wpath + src_len, wsuffix);
@@ -222,9 +254,9 @@ void file_path_append(file_t* dst, file_t* src, const char* suffix)
 		return;
 	}
 #endif
-	assert(!!file->path);
-	size_t src_len = strlen(src->path);
-	size_t dst_len = src_len + strlen(suffix) + 1;
+	assert(!!src->path);
+	src_len = strlen(src->path);
+	dst_len = src_len + strlen(suffix) + 1;
 	dst->path = (char*)rsh_malloc(dst_len);
 	strcpy(dst->path, src->path);
 	strcpy(dst->path + src_len, suffix);
@@ -323,11 +355,11 @@ int file_stat(file_t* file, int fstat_flags)
 
 
 /**
- * Retrieve file information (type, size, mtime) into file_t fields.
+ * Open the file and return its decriptor.
  *
- * @param file the file information
+ * @param file the file information, including the path
  * @param fopen_flags bitmask consisting of FileFOpenModes bits
- * @return 0 on success, -1 on error
+ * @return file descriptor on success, NULL on error
  */
 FILE* file_fopen(file_t* file, int fopen_flags)
 {
@@ -357,12 +389,21 @@ FILE* file_fopen(file_t* file, int fopen_flags)
 #endif
 }
 
-#ifdef _WIN32
+/**
+ * Open file at the specified path and return its decriptor.
+ *
+ * @param tpath the file path
+ * @param tmode the mode for file access
+ * @return file descriptor on success, NULL on error
+ */
 FILE* rsh_tfopen(ctpath_t tpath, file_tchar* tmode)
 {
+#ifdef _WIN32
 	return _wfsopen(tpath, tmode, _SH_DENYNO);
-}
+#else
+	return fopen(tpath, tmode);
 #endif
+}
 
 /**
  * Rename or move the file. The source and destination paths should be on the same device.
@@ -386,29 +427,59 @@ int file_rename(file_t* from, file_t* to)
 	return rename(from->path, to->path);
 }
 
+/**
+ * Rename a given file to *.bak, if it exists.
+ *
+ * @param file the file to move
+ * @return 0 on success, -1 on error and errno is set
+ */
+int file_move_to_bak(file_t* file)
+{
+	if (file_stat(file, 0) >= 0) {
+		int res;
+		int save_errno;
+		file_t bak_file;
+		file_path_append(&bak_file, file, ".bak");
+		res = file_rename(file, &bak_file);
+		save_errno = errno;
+		file_cleanup(&bak_file);
+		if (res < 0)
+			errno = save_errno;
+		return res;
+	}
+	return -1;
+}
+
 #ifdef _WIN32
-static int win_can_open_exclusive(wchar_t* wpath)
+/**
+ * Check if the given file can't be opened with exclusive write access.
+ *
+ * @param file the file
+ * @return 1 if the file is locked and can't be exclusively opened, 0 otherwise
+ */
+static int can_not_open_exclusive(wchar_t* wpath)
 {
 	int fd = _wsopen(wpath, _O_RDONLY | _O_BINARY, _SH_DENYWR, 0);
-	if (fd < 0) return 0;
+	if (fd < 0) return 1;
 	_close(fd);
-	return 1;
+	return 0;
 }
 
 /**
- * Check if given file can be opened with exclusive write access.
+ * Check if given file is write-locked, i.e. can not be opened
+ * with exclusive write access.
  *
- * @param path path to the file
- * @return 1 if file can be opened, 0 otherwise
+ * @param file the file
+ * @return 1 if file can't be opened, 0 otherwise
  */
 int file_is_write_locked(file_t* file)
 {
 	int i, res = 0;
 	if (file->wpath)
-		return win_can_open_exclusive(file->wpath);
+		return can_not_open_exclusive(file->wpath);
 	for (i = 0; i < 2 && !res; i++) {
 		file->wpath = c2w_long_path(file->path, i);
-		if(file->wpath && win_can_open_exclusive(file->wpath)) return 1;
+		if(file->wpath && can_not_open_exclusive(file->wpath)) return 1;
 		free(file->wpath);
 	}
 	file->wpath = NULL;
@@ -432,6 +503,11 @@ int file_is_write_locked(file_t* file)
 int file_list_open(file_list_t* list, file_t* file_path)
 {
 	memset(list, 0, sizeof(file_list_t));
+	if (!!(file_path->mode & FILE_IFSTDIN))
+	{
+		list->fd = stdin;
+		return 0;
+	}
 	list->fd = file_fopen(file_path, FOpenRead | FOpenBin);
 	return (list->fd ? 0 : -1);
 }
@@ -456,7 +532,7 @@ enum FileListStateBits {
  * Iterate over file list.
  *
  * @param list the file list to iterate over
- * @return 1 if next file have been obtained, 0 on EOF or error
+ * @return 1 if the next file has been obtained, 0 on EOF or error
  */
 int file_list_read(file_list_t* list)
 {
@@ -478,6 +554,167 @@ int file_list_read(file_list_t* list)
 	}
 	return 0;
 }
+
+/****************************************************************************
+ *                           Directory functions                            *
+ ****************************************************************************/
+#ifdef _WIN32
+struct WIN_DIR_t
+{
+	WIN32_FIND_DATAW findFileData;
+	HANDLE hFind;
+	struct win_dirent dir;
+	int state; /* 0 - not started, -1 - ended, >=0 file index */
+};
+
+/**
+ * Open directory iterator for reading the directory content.
+ *
+ * @param dir_path directory path
+ * @return pointer to directory stream. On error, NULL is returned,
+ *         and errno is set appropriately.
+ */
+WIN_DIR* win_opendir(const char* dir_path)
+{
+	WIN_DIR* d;
+	wchar_t* wpath;
+
+	/* append '\*' to the dir_path */
+	size_t len = strlen(dir_path);
+	char *path = (char*)malloc(len + 3);
+	if (!path) return NULL; /* failed, malloc also set errno = ENOMEM */
+	strcpy(path, dir_path);
+	strcpy(path + len, "\\*");
+
+	d = (WIN_DIR*)malloc(sizeof(WIN_DIR));
+	if (!d) {
+		free(path);
+		return NULL;
+	}
+	memset(d, 0, sizeof(WIN_DIR));
+
+	wpath = c2w_long_path(path, 0);
+	d->hFind = (wpath != NULL ?
+		FindFirstFileW(wpath, &d->findFileData) : INVALID_HANDLE_VALUE);
+	free(wpath);
+
+	if (d->hFind == INVALID_HANDLE_VALUE && GetLastError() != ERROR_ACCESS_DENIED) {
+		wpath = c2w_long_path(path, 1); /* try to use secondary codepage */
+		if (wpath) {
+			d->hFind = FindFirstFileW(wpath, &d->findFileData);
+			free(wpath);
+		}
+	}
+	free(path);
+
+	if (d->hFind == INVALID_HANDLE_VALUE && GetLastError() == ERROR_ACCESS_DENIED) {
+		free(d);
+		errno = EACCES;
+		return NULL;
+	}
+	set_errno_from_last_file_error();
+
+	d->state = (d->hFind == INVALID_HANDLE_VALUE ? -1 : 0);
+	d->dir.d_name = NULL;
+	return d;
+}
+
+/**
+ * Open a directory for reading its content.
+ * For simplicity the function supposes that dir_path points to an
+ * existing directory and doesn't check for this error.
+ * The Unicode version of the function.
+ *
+ * @param dir_path directory path
+ * @return pointer to directory iterator
+ */
+WIN_DIR* win_wopendir(const wchar_t* dir_path)
+{
+	WIN_DIR* d;
+
+	/* append '\*' to the dir_path */
+	wchar_t *wpath = make_pathw(dir_path, (size_t)-1, L"*");
+	d = (WIN_DIR*)rsh_malloc(sizeof(WIN_DIR));
+
+	d->hFind = FindFirstFileW(wpath, &d->findFileData);
+	free(wpath);
+	if (d->hFind == INVALID_HANDLE_VALUE && GetLastError() == ERROR_ACCESS_DENIED) {
+		free(d);
+		errno = EACCES;
+		return NULL;
+	}
+
+	/* note: we suppose if INVALID_HANDLE_VALUE was returned, then the file listing is empty */
+	d->state = (d->hFind == INVALID_HANDLE_VALUE ? -1 : 0);
+	d->dir.d_name = NULL;
+	return d;
+}
+
+/**
+ * Close a directory iterator.
+ *
+ * @param d pointer to the directory iterator
+ */
+void win_closedir(WIN_DIR* d)
+{
+	if (d->hFind != INVALID_HANDLE_VALUE) {
+		FindClose(d->hFind);
+	}
+	free(d->dir.d_name);
+	free(d);
+}
+
+/**
+ * Read a directory content.
+ *
+ * @param d pointer to the directory iterator
+ * @return directory entry or NULL if no entries left
+ */
+struct win_dirent* win_readdir(WIN_DIR* d)
+{
+	char* filename;
+	int failed;
+
+	if (d->state == -1) return NULL;
+	if (d->dir.d_name != NULL) {
+		free(d->dir.d_name);
+		d->dir.d_name = NULL;
+	}
+
+	for (;;) {
+		if (d->state > 0) {
+			if ( !FindNextFileW(d->hFind, &d->findFileData) ) {
+				/* the directory listing has ended */
+				d->state = -1;
+				return NULL;
+			}
+		}
+		d->state++;
+
+		if (d->findFileData.cFileName[0] == L'.' &&
+			(d->findFileData.cFileName[1] == 0 ||
+			(d->findFileData.cFileName[1] == L'.' &&
+			d->findFileData.cFileName[2] == 0))) {
+				/* simplified implementation, skips '.' and '..' names */
+				continue;
+		}
+
+		d->dir.d_name = filename = wchar_to_cstr(d->findFileData.cFileName, WIN_DEFAULT_ENCODING, &failed);
+
+		if (filename && !failed) {
+			d->dir.d_wname = d->findFileData.cFileName;
+			d->dir.d_isdir = (0 != (d->findFileData.dwFileAttributes &
+				FILE_ATTRIBUTE_DIRECTORY));
+			return &d->dir;
+		}
+		/* quietly skip an invalid filename and repeat the search */
+		if (filename) {
+			free(filename);
+			d->dir.d_name = NULL;
+		}
+	}
+}
+#endif /* _WIN32 */
 
 #ifdef __cplusplus
 } /* extern "C" */
