@@ -6,10 +6,11 @@ PREFIX = /usr/local
 RUBY ?= ruby
 PYTHON ?= python
 PERL ?= perl
-CP = cp -l --parents
-PERL_OPTIMIZE = -O2 -g -Wall
+PERL_LIBRHASH_TYPE ?= auto
+PERL_OPTIMIZE ?= -O2 -g -Wall
 ARCHIVE_GZIP = rhash-bindings-$(VERSION)-src.tar.gz
 COPYDIR = rhash-bindings-$(VERSION)
+CP = cp -l --parents
 
 all: configure build test
 clean: distclean
@@ -18,13 +19,14 @@ configure: $(patsubst %, configure-%, $(filter perl ruby php, $(BINDINGS)))
 build: $(patsubst %, build-%, $(BINDINGS))
 test: $(patsubst %, test-%, $(BINDINGS))
 install: $(patsubst %, install-%, $(filter perl ruby php, $(BINDINGS)))
+distclean: $(patsubst %, clean-%, $(BINDINGS))
 
 configure-perl: perl/Makefile
 configure-ruby: ruby/Makefile
 configure-php: php/Makefile
 
 perl/Makefile: perl/Makefile.PL
-	cd perl && USE_SYSTEM_LIBRHASH=1 $(PERL) Makefile.PL INSTALLDIRS=vendor
+	cd perl && LIBRHASH="$(PERL_LIBRHASH_TYPE)" $(PERL) Makefile.PL INSTALLDIRS=vendor
 
 php/Makefile: php/config.m4
 	cd php && phpize && ./configure --with-rhash
@@ -109,10 +111,15 @@ cpan:
 	tar -czf $(PERL_PKG).tar.gz --owner=root:0 --group=root:0 $(PERL_PKG)/
 	rm -rf $(PERL_PKG)/
 
-distclean:
+clean-java:
 	+$(MAKE) -C java distclean
+clean-mono:
 	+$(MAKE) -C mono clean
+clean-ruby:
 	+[ ! -f ruby/Makefile ] || $(MAKE) -C ruby distclean
+clean-perl:
 	+[ ! -f perl/Makefile ] || $(MAKE) -C perl distclean
+clean-php:
 	[ ! -f php/configure ] || (cd php && phpize --clean)
+clean-python:
 	rm -f python/*.pyc
