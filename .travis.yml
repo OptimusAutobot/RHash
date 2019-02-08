@@ -3,6 +3,23 @@ language: c
 
 matrix:
   include:
+    - name: "Bindings: Java"
+      os: linux
+      dist: xenial
+      compiler: gcc
+      sudo: false
+      addons:
+        apt:
+          packages:
+            - default-jdk junit4 default-jdk-doc
+      script:
+        - ./configure
+        - make lib-shared test-lib print-info || ! cat config.mak librhash/config.mak config.log
+        - javac --version && javadoc --version
+        - make -C bindings build-java LIBRHASH_INC=-I$(pwd)/librhash LIBRHASH_LD=-L$(pwd)/librhash
+        - LD_LIBRARY_PATH=$(pwd)/librhash make -C bindings test-java
+        - make -C bindings clean-java
+
     - name: "Bindings: Mono"
       os: linux
       dist: xenial
