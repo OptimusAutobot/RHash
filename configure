@@ -4,6 +4,7 @@
 OPT_OPENSSL=auto
 OPT_OPENSSL_RUNTIME=auto
 OPT_GETTEXT=auto
+OPT_CC=
 
 export LC_ALL=C
 CFG_LINE="$*"
@@ -17,13 +18,36 @@ BUILD_EXTRA_CFLAGS=
 BUILD_EXTRA_LDFLAGS=
 CHECK_LDFLAGS=
 WARN_CFLAGS="-Wall -W -Wstrict-prototypes -Wnested-externs -Winline -Wpointer-arith -Wbad-function-cast -Wmissing-prototypes -Wmissing-declarations"
-INSTALL_SYMLINKS="sfv-hash tiger-hash tth-hash whirlpool-hash has160-hash gost-hash edonr256-hash edonr512-hash ed2k-link magnet-link"
+INSTALL_SYMLINKS="sfv-hash has160-hash gost12-256-hash gost12-512-hash edonr256-hash edonr512-hash tiger-hash tth-hash whirlpool-hash ed2k-link magnet-link"
 INSTALL_LIB_STATIC=auto
 INSTALL_LIB_SHARED=auto
 INSTALL_PKGCONFIGDIR="$PKG_INSTALLDIR"
 
+# detect and prepare tmp directory
+for DETECT_TMP in "$TMPDIR" "$TEMPDIR" "/tmp"; do
+  test -d "$DETECT_TMP" && break
+done
+RANDNUM=$RANDOM
+test -z $RANDNUM && which jot >/dev/null && RANDNUM=$(jot -r 1 1 32767)
+BUILD_TMPDIR="$DETECT_TMP/rhash-configure-$RANDNUM-$$"
+mkdir $BUILD_TMPDIR || die "Unable to create tmp dir."
+TMPC="$BUILD_TMPDIR/tmp.c"
+TMPT="$BUILD_TMPDIR/tmp.txt"
+TMPBIN="$BUILD_TMPDIR/tmp"
+TMPLOG="config.log"
+rm -f "$TMPLOG"
+echo "Configuration parameters: \"$CFG_LINE\"" > "$TMPLOG"
+echo "Symlinks to install: $INSTALL_SYMLINKS" >> "$TMPLOG"
+echo >> "$TMPLOG"
+
+remove_tmpdir()
+{
+  rm -rf "$BUILD_TMPDIR"
+}
+trap remove_tmpdir EXIT
+
 # display error message and exit
-die () {
+die() {
   echo
   echo "Error: $@" >&2
   echo >&2
@@ -59,9 +83,9 @@ Directory Options:
 Features options:
   --disable-FEATURE      do not include FEATURE
   --enable-gettext       enable gettext (localization) support [autodetect]
-  --enable-openssl       enable OpenSSL (optimized hash functions) support
-                         [autodetect]
-  --enable-openssl-runtime   load OpenSSL at runtime if present [autodetect]
+  --enable-openssl[=runtime] enable OpenSSL (optimized hash functions) support.
+                         If runtime specified, then load OpenSSL at runtime if
+                         the library is found [autodetect]
   --enable-static        statically link RHash binary
   --enable-lib-static    build and install LibRHash static library [auto]
   --enable-lib-shared    build and install LibRHash shared library [auto]
@@ -72,6 +96,19 @@ Use these options if autodetection fails:
   --extra-ldflags=FLAGS       extra LDFLAGS
 EOF
 exit 0
+}
+
+check_set_contains()
+{
+  VALUE="$1"
+  shift
+  for VALID_VALUE do
+	if test "$VALUE" = "$VALID_VALUE"; then
+	  return 0
+	fi
+    shift
+  done
+  return 1
 }
 
 get_opt_value()
@@ -118,20 +155,27 @@ for OPT do
   --enable-openssl)
       OPT_OPENSSL=yes
       ;;
+  --enable-openssl=*)
+      OPT_OPENSSL=$(get_opt_value $OPT)
+      check_set_contains "$OPT_OPENSSL" "runtime" || die "Unexpected option value: $OPT"
+      ;;
   --disable-openssl)
       OPT_OPENSSL=no
       ;;
   --enable-openssl-runtime)
-      OPT_OPENSSL_RUNTIME=yes
+      OPT_OPENSSL=runtime # legacy option
+      echo "warning: use --enable-openssl=runtime instead of $OPT" >> "$TMPLOG"
       ;;
   --disable-openssl-runtime)
-      OPT_OPENSSL_RUNTIME=no
+      OPT_OPENSSL=yes # legacy option
+      echo "warning: use --enable-openssl instead of $OPT" >> "$TMPLOG"
       ;;
   --target=*)
     BUILD_TARGET=$(get_opt_value $OPT)
     ;;
   --cc=*)
     CC=$(get_opt_value $OPT)
+    OPT_CC=1
     ;;
   --ar=*)
     CMD_AR=$(get_opt_value $OPT)
@@ -167,7 +211,7 @@ for OPT do
     BUILD_DEBUG='-g'
     ;;
   --enable-debug=*)
-    BUILD_DEBUG='-g'$(get_opt_value $OPT)
+    BUILD_DEBUG='-g '$(get_opt_value $OPT)
     ;;
   --disable-debug)
     BUILD_DEBUG=
@@ -176,10 +220,10 @@ for OPT do
     CMD_INSTALL=$(get_opt_value $OPT)
     ;;
   --extra-cflags=*)
-    BUILD_EXTRA_CFLAGS=$(get_opt_value $OPT)
+    BUILD_EXTRA_CFLAGS="$BUILD_EXTRA_CFLAGS $(get_opt_value $OPT)"
     ;;
   --extra-ldflags=*)
-    BUILD_EXTRA_LDFLAGS=$(get_opt_value $OPT)
+    BUILD_EXTRA_LDFLAGS="$BUILD_EXTRA_LDFLAGS $(get_opt_value $OPT)"
     ;;
   *)
       echo "unknown option $OPT"
@@ -199,32 +243,18 @@ test -z "$INSTALL_LIBDIR" && INSTALL_LIBDIR="$INSTALL_EXEC_PREFIX/lib"
 test -z "$INSTALL_PKGCONFIGDIR" && INSTALL_PKGCONFIGDIR="$INSTALL_LIBDIR/pkgconfig"
 test -z "$INSTALL_LOCALEDIR" && INSTALL_LOCALEDIR="$INSTALL_PREFIX/share/locale"
 
-# detect and prepare tmp directory
-for DETECT_TMP in "$TMPDIR" "$TEMPDIR" "/tmp" ; do
-  test -d "$DETECT_TMP" && break
-done
-RANDNUM=$RANDOM
-test -z $RANDNUM && which jot >/dev/null && RANDNUM=$(jot -r 1 1 32767)
-BUILD_TMPDIR="$DETECT_TMP/rhash-configure-$RANDNUM-$$"
-mkdir $BUILD_TMPDIR || die "Unable to create tmp dir."
-TMPC="$BUILD_TMPDIR/tmp.c"
-TMPT="$BUILD_TMPDIR/tmp.txt"
-TMPBIN="$BUILD_TMPDIR/tmp"
-TMPLOG="config.log"
-rm -f "$TMPLOG"
-echo "Configuration parameters: \"$CFG_LINE\"" > "$TMPLOG"
-echo "Symlinks to install: $INSTALL_SYMLINKS" >> "$TMPLOG"
-echo >> "$TMPLOG"
-
-remove_tmpdir()
-{
-  rm -rf "$BUILD_TMPDIR"
-}
-trap remove_tmpdir EXIT
-
 join_params()
 {
   printf '%s ' $@ | sed -e 's/ $//'
+}
+
+run_cmd() {
+  echo "Run: $@" >> "$TMPLOG"
+  $@ >> "$TMPLOG" 2>&1
+  TMPRES="$?"
+  echo "Run result: $TMPRES" >> "$TMPLOG"
+  echo >> "$TMPLOG"
+  return "$TMPRES"
 }
 
 yn_nonempty()
@@ -232,21 +262,31 @@ yn_nonempty()
   test -n "$1" && echo yes || echo no;
 }
 
+log_start()
+{
+  echo "============ Checking for $1 ============" >> "$TMPLOG"
+}
+
+log_finish()
+{
+  echo "=============================================" >> "$TMPLOG"
+  echo "" >> "$TMPLOG"
+}
+
 # Use this before starting a check
 start_check() {
-  echo "============ Checking for $1 ============" >> "$TMPLOG"
+  log_start "$1"
   printf '%s' "Checking for $1 ... "
   res_comment=""
 }
 
 # Use this to echo the results of a check
 finish_check() {
-  if test "$res_comment" ; then
+  if test -n "$res_comment"; then
     res_comment="($res_comment)"
   fi
   echo "Result is: $1 $res_comment" >> "$TMPLOG"
-  echo "=============================================" >> "$TMPLOG"
-  echo "" >> "$TMPLOG"
+  log_finish
   echo "$1 $res_comment"
   res_comment=""
 }
@@ -353,7 +393,7 @@ case "$HOST_OS" in
     ;;
 esac
 
-if test -z "$BUILD_TARGET" ; then
+if test -z "$BUILD_TARGET"; then
   # host's CPU/instruction set
   set_host_arch() {
       case "$1" in
@@ -376,7 +416,7 @@ if test -z "$BUILD_TARGET" ; then
       esac
   }
   set_host_arch "$(uname -m 2>&1)"
-  if test "$HOST_ARCH" = UNKNOWN ; then
+  if test "$HOST_ARCH" = UNKNOWN; then
     set_host_arch "$(uname -p 2>&1)"
   fi
   TARGET_OS="$HOST_OS"
@@ -400,15 +440,16 @@ else
       mingw32*) TARGET_OS=MINGW32 ;;
       wine) TARGET_OS=Wine ;;
       darwin*) TARGET_OS=Darwin ;;
+      cygwin*) TARGET_OS=CYGWIN ;;
     esac
   }
   TARGET_OS="UNKNOWN"
   set_target_os 3
-  if test "$TARGET_OS" = UNKNOWN ; then
+  if test "$TARGET_OS" = UNKNOWN; then
     set_target_os 2
   fi
   TARGET_ARCH=$(echo $BUILD_TARGET | cut -d '-' -f 1)
-  if test "$(echo $TARGET_ARCH)" != "x86_64" ; then
+  if test "$(echo $TARGET_ARCH)" != "x86_64"; then
     TARGET_ARCH=$(echo $TARGET_ARCH | tr '_' '-')
   fi
 fi
@@ -469,8 +510,9 @@ if test "$(basename $CC)" = "icc" || test "$(basename $CC)" = "ecc"; then
   finish_check "$cc_version"
 else
   CC_TMP="$CC"
-  for CC in "$CC_TMP" gcc cc ; do
-    if $CC -v >/dev/null 2>&1; then
+  test -n "$OPT_CC" && OTHER_CC= || OTHER_CC="gcc cc"
+  for CC in "$CC_TMP" $OTHER_CC; do
+    if run_cmd "$CC -v"; then
       cc_name_tmp=$($CC -v 2>&1 | tail -n 1 | cut -d ' ' -f 1)
       if test "$cc_name_tmp" = "gcc"; then
         cc_name=$cc_name_tmp
@@ -518,6 +560,12 @@ fi # icc
 test -z "$cc_vendor" && die "compiler not found"
 test "$cc_fail" = "yes" && die "unsupported compiler version"
 
+log_start "compiler working with default options"
+if ! cc_check_cflag; then
+  die "compiler doesn't work"
+fi
+log_finish
+
 if test "$cc_name" = "gcc" && test "$_cc_major" -gt 3; then
   WARN_CFLAGS="$WARN_CFLAGS -Wdeclaration-after-statement"
 fi
@@ -526,7 +574,7 @@ fi
 has_optimization()
 {
   # posix-compatible way to find -O<n> option
-  for OPT in $BUILD_EXTRA_CFLAGS; do
+  for OPT in $BUILD_EXTRA_CFLAGS $BUILD_DEBUG; do
     case "$OPT" in
       -O[0-3]|-O) return 0 ;;
     esac
@@ -534,8 +582,18 @@ has_optimization()
   return 1
 }
 has_optimization && OPTLEVEL= || OPTLEVEL="-O2"
-OPTFLAGS="-pipe -DNDEBUG -fomit-frame-pointer -ffunction-sections -fdata-sections"
-OPTFLAGS=$(join_params $BUILD_DEBUG $OPTLEVEL $OPTFLAGS)
+test -n "$BUILD_DEBUG" && OPTNDEBUG= || OPTNDEBUG="-DNDEBUG"
+OPTFLAGS="-pipe -ffunction-sections -fdata-sections"
+check_set_contains "-fno-omit-frame-pointer" $BUILD_EXTRA_CFLAGS $BUILD_DEBUG \
+  || OPTFLAGS="$OPTFLAGS -fomit-frame-pointer"
+OPTFLAGS=$(join_params $BUILD_DEBUG $OPTLEVEL $OPTNDEBUG $OPTFLAGS)
+
+# test that compiler works with options specified by command line
+log_start "compiler working with provided options"
+if ! cc_check_cflag; then
+  die "wrong compiler options provided"
+fi
+log_finish
 
 # detect proper shared library name
 SHARED_PREFIX="lib"
@@ -568,7 +626,7 @@ fi
 # check for linker flags
 LD_STATIC=-static
 test "$BUILD_STATIC" = "auto" && BUILD_STATIC=no
-test "$OPT_OPENSSL_RUNTIME" = "yes" && ! win32 && LD_STATIC=
+test "$OPT_OPENSSL" = "runtime" && ! win32 && LD_STATIC=
 if test -n "$LD_STATIC"; then
   start_check "linker support for $LD_STATIC"
   if cc_check_cflag "$LD_STATIC"; then
@@ -578,11 +636,13 @@ if test -n "$LD_STATIC"; then
   fi
   finish_check $(yn_nonempty "$LD_STATIC")
 fi
-test "$OPT_OPENSSL_RUNTIME" = "auto" && test "$BUILD_STATIC" = "yes" && ! win32 && OPT_OPENSSL_RUNTIME=no
 
-ALLOW_RUNTIME_LINKING=yes
 LIBDL_LDFLAGS=
-if ! win32 && test "$OPT_OPENSSL_RUNTIME" != "no"; then
+if win32; then
+  ALLOW_RUNTIME_LINKING=yes
+elif test "$BUILD_STATIC" = "yes"; then
+  ALLOW_RUNTIME_LINKING=no
+elif test "$OPT_OPENSSL" = "auto" || test "$OPT_OPENSSL" = "runtime"; then
   start_check "linker support for dlopen"
   ALLOW_RUNTIME_LINKING=no
   if cc_check_statement "dlfcn.h" 'dlopen("", RTLD_NOW);'; then
@@ -666,16 +726,14 @@ fi
 
 if test "$OPT_OPENSSL" != "no"; then
   start_check "OpenSSL"
-  test "$OPT_OPENSSL" = "auto" && test "$OPT_OPENSSL_RUNTIME" = "yes" && OPT_OPENSSL=yes
   OPENSSL_FOUND=no
   if test "$ALLOW_RUNTIME_LINKING" = "no"; then
     echo "No runtime library loading, because dlopen() is not found!" >> "$TMPLOG"
-    test "$OPT_OPENSSL_RUNTIME" = "yes" && die "dlopen() is required for OpenSSL runtime loading"
-    OPT_OPENSSL_RUNTIME=no
+    test "$OPT_OPENSSL" = "runtime" && die "dlopen() is required for OpenSSL runtime loading"
   fi
   OPENSSL_HEADERS="openssl/opensslconf.h openssl/md4.h openssl/md5.h openssl/sha.h"
   if cc_check_headers $OPENSSL_HEADERS; then
-    if test "$OPT_OPENSSL_RUNTIME" != "no"; then
+    if test "$OPT_OPENSSL" = "runtime" || ( test "$ALLOW_RUNTIME_LINKING" = "yes" && test "$OPT_OPENSSL" = "auto" ); then
       OPENSSL_FOUND=runtime
       LIBRHASH_DEFINES=$(join_params $LIBRHASH_DEFINES -DOPENSSL_RUNTIME)
       OPENSSL_LDFLAGS="$LIBDL_LDFLAGS"
@@ -692,10 +750,10 @@ if test "$OPT_OPENSSL" != "no"; then
     fi
   fi
   finish_check $OPENSSL_FOUND
-  test "$OPT_OPENSSL" = "yes" && test "$OPENSSL_FOUND" = "no" && die "OpenSSL library not found"
+  test "$OPT_OPENSSL" != "auto" && test "$OPENSSL_FOUND" = "no" && die "OpenSSL library not found"
 fi
 
-# building of static/shared binary an library
+# building of static/shared binary and library
 RHASH_STATIC=rhash_static
 RHASH_SHARED=rhash_shared
 RHASH_BUILD_TARGETS=
@@ -824,6 +882,7 @@ OPTLDFLAGS  = $WIN_LDFLAGS
 WARN_CFLAGS = $WARN_CFLAGS
 ADDCFLAGS   = $BUILD_EXTRA_CFLAGS
 ADDLDFLAGS  = $BUILD_EXTRA_LDFLAGS
+CONFCFLAGS  = -DSYSCONFDIR=\\"$INSTALL_SYSCONFDIR\\"
 CFLAGS  = $RHASH_DEFINES \$(OPTFLAGS) \$(WARN_CFLAGS) \$(ADDCFLAGS)
 LDFLAGS = \$(OPTLDFLAGS) \$(ADDLDFLAGS) $GETTEXT_LDFLAGS
 BIN_STATIC_LDFLAGS = \$(LDFLAGS) $(join_params $LD_STATIC $OPENSSL_LDFLAGS)

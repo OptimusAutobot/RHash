@@ -3,43 +3,64 @@ language: c
 
 matrix:
   include:
-    - os: linux
+    - name: gcc static
+      os: linux
+      dist: precise
       compiler: gcc
       sudo: false
       env:
-        - CONFIGURE_FLAGS="--enable-static --enable-openssl-runtime"
+        - CONFIGURE_FLAGS="--enable-static --disable-openssl --disable-gettext"
+
+    - name: gcc shared debug lib-shared openssl=runtime
+      os: linux
+      dist: bionic
+      compiler: gcc
+      sudo: false
+      env:
+        - CONFIGURE_FLAGS="--disable-static --enable-lib-shared --enable-openssl=runtime --enable-debug=-O0 --extra-cflags='-Wextra -Werror'"
       addons:
         apt:
           packages:
             - libssl-dev
 
-    - os: linux
-      compiler: gcc
-      sudo: false
-      env:
-        - CONFIGURE_FLAGS="--disable-static --disable-openssl"
-
-    - os: osx
+    - name: clang xcode6.4 static
+      os: osx
       osx_image: xcode6.4
       compiler: clang
       sudo: false
       env:
-        - CONFIGURE_FLAGS="--enable-static --disable-openssl"
+        - CONFIGURE_FLAGS="--enable-static --disable-openssl --disable-gettext"
 
-    - os: osx
+    - name: clang xcode7.3 shared openssl=runtime
+      os: osx
       osx_image: xcode7.3
       compiler: clang
       sudo: false
       env:
-        - CONFIGURE_FLAGS="--enable-static --enable-openssl-runtime --extra-cflags=-I/usr/local/opt/openssl/include"
+        - CONFIGURE_FLAGS="--disable-static --enable-openssl=runtime --extra-cflags=-I/usr/local/opt/openssl/include"
 
-    - os: osx
+    - name: clang-default static debug sanitizer
+      os: osx
       compiler: clang
       sudo: false
       env:
-        - CONFIGURE_FLAGS="--disable-static --enable-openssl-runtime --extra-cflags=-I/usr/local/opt/openssl/include"
+        - CONFIGURE_FLAGS="--enable-static --disable-openssl --disable-gettext --enable-debug=-O0 --extra-cflags='-fsanitize=address -fno-omit-frame-pointer -Werror' --extra-ldflags=-fsanitize=address"
 
-    - os: linux
+    - name: clang xcode11.2 shared openssl=runtime
+      os: osx
+      osx_image: xcode11.2
+      compiler: clang
+      sudo: false
+      env:
+        - CONFIGURE_FLAGS="--disable-static --enable-openssl=runtime --extra-cflags=-I/usr/local/opt/openssl/include --extra-cflags=-Wextra"
+      addons:
+        homebrew:
+          packages:
+            - openssl
+
+    - name: gcc arm static
+      os: linux
+      dist: bionic
       compiler: arm-linux-gnueabi-gcc
       sudo: required # enable FS with binfmt support
       env:
@@ -50,7 +71,9 @@ matrix:
             - gcc-arm-linux-gnueabi libc-dev-armel-cross
             - qemu qemu-user-static binfmt-support
 
-    - os: linux
+    - name: gcc powerpc static
+      os: linux
+      dist: bionic
       compiler: powerpc-linux-gnu-gcc
       sudo: required
       env:
@@ -61,35 +84,35 @@ matrix:
             - gcc-powerpc-linux-gnu libc-dev-powerpc-cross
             - qemu qemu-user-static binfmt-support
 
-    - os: linux
+    - name: gcc powerpc64 static
+      os: linux
+      dist: bionic
       compiler: powerpc64-linux-gnu-gcc
       sudo: required
       env:
         - CONFIGURE_FLAGS="--enable-static --disable-openssl --disable-gettext"
       addons:
         apt:
-          sources:
-            - sourceline: 'deb http://archive.ubuntu.com/ubuntu/ xenial main universe'
-            - sourceline: 'deb http://archive.ubuntu.com/ubuntu/ xenial-updates main universe'
           packages:
             - gcc-powerpc64-linux-gnu libc-dev-ppc64-cross
             - qemu qemu-user-static binfmt-support
 
-    - os: linux
+    - name: gcc mips64el static
+      os: linux
+      dist: bionic
       compiler: mips64el-linux-gnuabi64-gcc
       sudo: required
       env:
         - CONFIGURE_FLAGS="--enable-static --disable-openssl --disable-gettext"
       addons:
         apt:
-          sources:
-            - sourceline: 'deb http://archive.ubuntu.com/ubuntu/ xenial main universe'
-            - sourceline: 'deb http://archive.ubuntu.com/ubuntu/ xenial-updates main universe'
           packages:
             - gcc-mips64el-linux-gnuabi64 libc-dev-mips64el-cross
             - qemu qemu-user-static binfmt-support
 
-    - os: linux
+    - name: i686-w64-mingw32 static lib-shared
+      os: linux
+      dist: bionic
       compiler: i686-w64-mingw32-gcc
       sudo: false
       env:
@@ -97,7 +120,7 @@ matrix:
       addons:
         apt:
           packages:
-            - dpkg gcc-mingw-w64-i686 wine1.6-i386
+            - dpkg gcc-mingw-w64-i686 wine32 wine-stable
       script:
         - ./configure --sysconfdir=/etc $CONFIGURE_FLAGS
         - make || ! cat config.mak librhash/config.mak config.log
@@ -106,7 +129,9 @@ matrix:
         - make install DESTDIR=$PWD/results
         - /usr/bin/find results/ -exec ls -ld '{}' ';'
 
-    - os: linux
+    - name: x86_64-w64-mingw32 static lib-shared
+      os: linux
+      dist: bionic
       compiler: x86_64-w64-mingw32-gcc
       sudo: false
       env:
@@ -119,11 +144,104 @@ matrix:
       addons:
         apt:
           packages:
-            - dpkg gcc-mingw-w64-x86-64 wine1.6-amd64
+            - dpkg gcc-mingw-w64-x86-64 wine-stable
+
+    - name: "Bindings: Java"
+      os: linux
+      dist: xenial
+      compiler: gcc
+      sudo: false
+      addons:
+        apt:
+          packages:
+            - default-jdk junit4 default-jdk-doc
+      script:
+        - ./configure
+        - make lib-shared test-lib print-info || ! cat config.mak librhash/config.mak config.log
+        - javac --version && javadoc --version
+        - make -C bindings build-java LIBRHASH_INC=-I$(pwd)/librhash LIBRHASH_LD=-L$(pwd)/librhash
+        - LD_LIBRARY_PATH=$(pwd)/librhash make -C bindings test-java
+        - make -C bindings clean-java
+
+    - name: "Bindings: Mono"
+      os: linux
+      dist: xenial
+      compiler: gcc
+      sudo: false
+      addons:
+        apt:
+          packages:
+            - cli-common-dev mono-devel monodoc-base
+      script:
+        - ./configure
+        - make lib-shared test-lib print-info || ! cat config.mak librhash/config.mak config.log
+        - mcs --version && mono --version
+        - make -C bindings build-mono
+        - LD_LIBRARY_PATH=$(pwd)/librhash make -C bindings test-mono
+        - make -C bindings clean-mono
+
+    - name: "Bindings: Perl"
+      os: linux
+      dist: xenial
+      compiler: gcc
+      sudo: false
+      script:
+        - ./configure
+        - make lib-shared test-lib print-info || ! cat config.mak librhash/config.mak config.log
+        - perl --version
+        - make -C bindings clean-perl configure-perl build-perl test-perl
+        - make -C bindings clean-perl && make clean
+        - make -C bindings cpan && tar xzf bindings/Crypt-RHash-[0-9]*.tar.gz
+        - cd Crypt-RHash-[0-9]*/ && perl Makefile.PL && make all test
+
+    - name: "Bindings: PHP"
+      os: linux
+      dist: xenial
+      compiler: gcc
+      sudo: false
+      addons:
+        apt:
+          packages:
+            - php-dev
+      script:
+        - ./configure
+        - make lib-shared test-lib print-info || ! cat config.mak librhash/config.mak config.log
+        - php --version
+        - make -C bindings configure-php build-php test-php
+        - make -C bindings clean-php
+
+    - name: "Bindings: Python"
+      os: linux
+      dist: xenial
+      sudo: false
+      script:
+        - ./configure
+        - make lib-shared test-lib print-info || ! cat config.mak librhash/config.mak config.log
+        - python2 --version && python3 --version
+        - PYTHON=python2 LD_LIBRARY_PATH=$(pwd)/librhash make -C bindings test-python
+        - PYTHON=python3 LD_LIBRARY_PATH=$(pwd)/librhash make -C bindings test-python
+        - make -C bindings clean-python
+
+    - name: "Bindings: Ruby"
+      os: linux
+      dist: xenial
+      compiler: gcc
+      sudo: false
+      env:
+        - LIBRHASH_INC=-I$(pwd)/librhash
+        - LIBRHASH_LD=-L$(pwd)/librhash
+      addons:
+        apt:
+          packages:
+            - ruby ruby-dev
+      script:
+        - ./configure
+        - make lib-shared test-lib print-info || ! cat config.mak librhash/config.mak config.log
+        - ruby --version
+        - LD_LIBRARY_PATH=$(pwd)/librhash make -C bindings configure-ruby build-ruby test-ruby
+        - make -C bindings clean-ruby
 
 script:
-  - ./configure --sysconfdir=/etc $CONFIGURE_FLAGS
-  - make
-  - test -f ./rhash || cat config.mak librhash/config.mak config.log
-  - make -C librhash print-info test
+  - eval ./configure --sysconfdir=/etc $CONFIGURE_FLAGS
+  - make all print-info test-lib || ! cat config.mak librhash/config.mak config.log
   - make test

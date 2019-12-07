@@ -1,3 +1,39 @@
+Thu, 28 Nov 2019 Aleksey
+	* change project license to BSD Zero Clause License
+
+Mon, 18 Nov 2019 Aleksey
+	* new printf-format modifier '%u' to print url-encoded filename, path or hash
+
+Fri, 15 Nov 2019 Aleksey
+	* Bugfix: btih in magnet links shall be hex-encoded
+
+Tue 12 Nov 2019 Aleksey
+	* correctly align UTF8 file paths, while printing verification results
+	* respect UTF8 BOM when updating or verifying a hash file
+
+Thu 17 Oct 2019 Aleksey
+	* print a new-line after ed2k link, when --ed2k-link option is passed
+
+Mon 14 Oct 2019 Aleksey
+	* exit on output errors with exit_code = 2
+	* change option --update=<file> to update the specified file
+
+Sun 29 Sep 2019 Aleksey
+	* make short option '-P' to be an alias for --percents
+
+Tue 02 Jul 2019 Aleksey
+	* change %{mtime} format to 'YYYY-MM-DD hh:mm:ss'
+
+Wed 26 Jun 2019 Aleksey
+	* Bugfix: --sysconfdir was ignored while searching for config on Linux
+
+Tue 25 Jun 2019 Aleksey
+	* support verification of base64-formated hash sums
+	* add formatting options: --hex, --base32, -b/--base64
+
+Mon 17 Jun 2019 Aleksey
+	* Bugfix: properly handle symlinks on the command line
+
 Mon 04 Feb 2019 Aleksey
 	* === Version 1.3.8 ===
 
@@ -693,7 +729,7 @@ Sun Jan 22 2006 Aleksey
 
 Sat Jan 14 2006 Aleksey
 	* Bugfix: console windows version now uses OEM (DOS) character set for output
-	
+
 	* === Version 0.7 ===
 	* some fixes in sfv format output
 

@@ -1,5 +1,9 @@
 /* common_func.c - functions used almost everywhere */
 
+#include "common_func.h"
+#include "parse_cmdline.h"
+#include "version.h"
+#include "win_utils.h"
 #include <assert.h>
 #include <ctype.h>
 #include <errno.h>
@@ -11,11 +15,6 @@
 #if defined( _WIN32) || defined(__CYGWIN__)
 # include <windows.h>
 #endif
-
-#include "common_func.h"
-#include "parse_cmdline.h"
-#include "version.h"
-#include "win_utils.h"
 
 /*=========================================================================
  * String functions
@@ -29,11 +28,11 @@
  * @param number the 64-bit number to output
  * @param min_width the minimum width, the number must take
  */
-void sprintI64(char *dst, uint64_t number, int min_width)
+void sprintI64(char* dst, uint64_t number, int min_width)
 {
 	char buf[24]; /* internal buffer to output the number to */
 	size_t len;
-	char *p = buf + 23; /* start filling from the buffer end */
+	char* p = buf + 23; /* start filling from the buffer end */
 	*(p--) = 0; /* last symbol should be '\0' */
 	if (number == 0) {
 		*(p--) = '0';
@@ -47,7 +46,7 @@ void sprintI64(char *dst, uint64_t number, int min_width)
 		memset(dst, 0x20, min_width - len); /* fill by spaces */
 		dst += min_width - len;
 	}
-	memcpy(dst, p+1, len+1); /* copy the number to the output buffer */
+	memcpy(dst, p + 1, len + 1); /* copy the number to the output buffer */
 }
 
 /**
@@ -61,57 +60,6 @@ int int_len(uint64_t num)
 	int len;
 	for (len = 0; num; len++, num /= 10);
 	return (len == 0 ? 1 : len); /* note: int_len(0) == 1 */
-}
-
-/**
- * Convert a byte to a hexadecimal string. The result, consisting of two
- * hexadecimal digits is stored into a buffer.
- *
- * @param dst  the buffer to receive two symbols of hex representation
- * @param byte the byte to decode
- * @param upper_case flag to print string in uppercase
- * @return pointer to the next char in buffer (dst+2)
- */
-static char* print_hex_byte(char *dst, const unsigned char byte, int upper_case)
-{
-	const char add = (upper_case ? 'A' - 10 : 'a' - 10);
-	unsigned char c = (byte >> 4) & 15;
-	*dst++ = (c > 9 ? c + add : c + '0');
-	c = byte & 15;
-	*dst++ = (c > 9 ? c + add : c + '0');
-	return dst;
-}
-
-/* unsafe characters are "<>{}[]%#/|\^~`@:;?=&+ */
-#define IS_GOOD_URL_CHAR(c) (isalnum((unsigned char)c) || strchr("$-_.!'(),", c))
-
-/**
- * URL-encode a string.
- *
- * @param dst buffer to receive result or NULL to calculate
- *    the lengths of encoded string
- * @param filename the file name
- * @return the length of the result string
- */
-int urlencode(char *dst, const char *name)
-{
-	const char *start;
-	if (!dst) {
-		int len;
-		for (len = 0; *name; name++) len += (IS_GOOD_URL_CHAR(*name) ? 1 : 3);
-		return len;
-	}
-	/* encode URL as specified by RFC 1738 */
-	for (start = dst; *name; name++) {
-		if ( IS_GOOD_URL_CHAR(*name) ) {
-			*dst++ = *name;
-		} else {
-			*dst++ = '%';
-			dst = print_hex_byte(dst, *name, 'A');
-		}
-	}
-	*dst = 0;
-	return (int)(dst - start);
 }
 
 /**
@@ -162,23 +110,73 @@ char* str_set(char* buf, int ch, int length)
 	return buf;
 }
 
+#ifdef _WIN32
 /**
- * Concatenates two strings and returns allocated buffer with result.
+ * Return wide-string obtained from the given source string by replacing its part with another string.
  *
- * @param orig original string
- * @param append the string to append
- * @return the buffer
+ * @param src source wide-string
+ * @param start_pos starting position of the replacement
+ * @param end_pos ending position of the replacement
+ * @param replacement the replacement ASCII string (nullable), NULL is interpreted as empty string
+ * @return result of replacement, the resulting string is always allocated by malloc(),
+ *         and must be freed by caller
  */
-char* str_append(const char* orig, const char* append)
+wchar_t* wcs_replace_n(const wchar_t* src, size_t start_pos, size_t end_pos, const char* replacement)
 {
-	size_t len1 = strlen(orig);
-	size_t len2 = strlen(append);
-	char* res = (char*)rsh_malloc(len1 + len2 + 1);
+	const size_t len1 = wcslen(src);
+	const size_t len2 = (replacement ? strlen(replacement) : 0);
+	size_t result_len;
+	size_t i;
+	wchar_t* result;
+	if (start_pos > len1)
+		start_pos = end_pos = len1;
+	else if (end_pos > len1)
+		end_pos = len1;
+	else if (start_pos > end_pos)
+		end_pos = start_pos;
+	result_len = len1 + len2 - (end_pos - start_pos);
+	result = (wchar_t*)rsh_malloc((result_len + 1) * sizeof(wchar_t));
+	memcpy(result, src, start_pos * sizeof(wchar_t));
+	for (i = 0; i < len2; i++)
+		result[start_pos + i] = (wchar_t)replacement[i];
+	if (end_pos < len1)
+		memcpy(result + start_pos + len2, src + end_pos, (len1 - end_pos) * sizeof(wchar_t));
+	result[result_len] = 0;
+	return result;
+}
+#endif
 
-	/* concatenate two strings */
-	memcpy(res, orig, len1);
-	memcpy(res + len1, append, len2 + 1);
-	return res;
+/**
+ * Return string obtained from the given source string by replacing its part with another string.
+ *
+ * @param src source string
+ * @param start_pos starting position of the replacement
+ * @param end_pos ending position of the replacement
+ * @param replacement the replacement string (nullable), NULL is interpreted as empty string
+ * @return result of replacement, the resulting string is always allocated by malloc(),
+ *         and must be freed by caller
+ */
+char* str_replace_n(const char* src, size_t start_pos, size_t end_pos, const char* replacement)
+{
+	const size_t len1 = strlen(src);
+	const size_t len2 = (replacement ? strlen(replacement) : 0);
+	size_t result_len;
+	char* result;
+	if (start_pos > len1)
+		start_pos = end_pos = len1;
+	else if (end_pos > len1)
+		end_pos = len1;
+	else if (start_pos > end_pos)
+		end_pos = start_pos;
+	result_len = len1 + len2 - (end_pos - start_pos);
+	result = (char*)rsh_malloc(result_len + 1);
+	memcpy(result, src, start_pos);
+	if (len2 > 0)
+		memcpy(result + start_pos, replacement, len2);
+	if (end_pos < len1)
+		memcpy(result + start_pos + len2, src + end_pos, len1 - end_pos);
+	result[result_len] = 0;
+	return result;
 }
 
 /**
@@ -204,7 +202,7 @@ int is_binary_string(const char* str)
  * @param str the string to measure
  * @return number of utf8 characters in the string
  */
-size_t strlen_utf8_c(const char *str)
+size_t count_utf8_symbols(const char* str)
 {
 	size_t length = 0;
 	for (; *str; str++) {
@@ -214,8 +212,8 @@ size_t strlen_utf8_c(const char *str)
 }
 
 /*=========================================================================
-* Program version information
-*=========================================================================*/
+ * Program version information
+ *=========================================================================*/
 
 const char* get_version_string(void)
 {
@@ -298,10 +296,10 @@ struct rhash_exit_handlers_t
 } rhash_exit_handlers = { 0, { 0 } };
 
 /**
-* Install a handler to be called on program exit.
-*
-* @param handler the hadler to add
-*/
+ * Install a handler to be called on program exit.
+ *
+ * @param handler the hadler to add
+ */
 void rsh_install_exit_handler(exit_handler_t handler)
 {
 	if (rhash_exit_handlers.handlers_count >= (sizeof(rhash_exit_handlers.handlers) / sizeof(rhash_exit_handlers.handlers[0])))
@@ -314,8 +312,8 @@ void rsh_install_exit_handler(exit_handler_t handler)
 }
 
 /**
-* Remove the last installed exit handler.
-*/
+ * Remove the last installed exit handler.
+ */
 void rsh_remove_exit_handler(void)
 {
 	if (rhash_exit_handlers.handlers_count == 0)
@@ -327,14 +325,24 @@ void rsh_remove_exit_handler(void)
 }
 
 /**
-* Call all installed exit handlers, starting from the latest one, and exit the program.
-*
-* @param code the program exit code
-*/
-void rsh_exit(int code)
+ * Call all installed exit handlers, starting from the latest one.
+ *
+ * @param code the program exit code
+ */
+void rsh_call_exit_handlers(void)
 {
 	while (rhash_exit_handlers.handlers_count > 0)
 		rhash_exit_handlers.handlers[--rhash_exit_handlers.handlers_count]();
+}
+
+/**
+ * Call all installed exit handlers and exit the program.
+ *
+ * @param code the program exit code
+ */
+void rsh_exit(int code)
+{
+	rsh_call_exit_handlers();
 	exit(code);
 }
 
@@ -516,7 +524,7 @@ void rsh_vector_destroy(vector_t* vect)
 	if (!vect) return;
 	if (vect->destructor) {
 		unsigned i;
-		for (i=0; i<vect->size; i++) vect->destructor(vect->array[i]);
+		for (i = 0; i < vect->size; i++) vect->destructor(vect->array[i]);
 	}
 	free(vect->array);
 	vect->size = vect->allocated = 0;
@@ -544,7 +552,7 @@ void rsh_vector_add_ptr(vector_t* vect, void* item)
 {
 	/* check if vect contains enough space for the next item */
 	if (vect->size >= vect->allocated) {
-		size_t size = (vect->allocated==0 ? 128 : vect->allocated * 2);
+		size_t size = (vect->allocated == 0 ? 128 : vect->allocated * 2);
 		vect->array = (void**)rsh_realloc(vect->array, size * sizeof(void*));
 		vect->allocated = size;
 	}
@@ -563,7 +571,7 @@ void rsh_vector_add_empty(struct vector_t* vect, size_t item_size)
 {
 	/* check if vect contains enough space for next item */
 	if (vect->size >= vect->allocated) {
-		size_t size = (vect->allocated==0 ? 128 : vect->allocated * 2);
+		size_t size = (vect->allocated == 0 ? 128 : vect->allocated * 2);
 		vect->array = (void**)rsh_realloc(vect->array, size * item_size);
 		vect->allocated = size;
 	}
@@ -603,7 +611,7 @@ void rsh_blocks_vector_destroy(blocks_vector_t* bvector)
  */
 strbuf_t* rsh_str_new(void)
 {
-	strbuf_t *res = (strbuf_t*)malloc(sizeof(strbuf_t));
+	strbuf_t* res = (strbuf_t*)malloc(sizeof(strbuf_t));
 	memset(res, 0, sizeof(strbuf_t));
 	return res;
 }
@@ -628,7 +636,7 @@ void rsh_str_free(strbuf_t* ptr)
  * @param str pointer to the string-buffer object
  * @param new_size number of bytes buffer must contain
  */
-void rsh_str_ensure_size(strbuf_t *str, size_t new_size)
+void rsh_str_ensure_size(strbuf_t* str, size_t new_size)
 {
 	if (new_size >= (size_t)str->allocated) {
 		if (new_size < 64) new_size = 64;
@@ -647,7 +655,7 @@ void rsh_str_ensure_size(strbuf_t *str, size_t new_size)
  * @param text the text to append
  * @param length number of character to append.
  */
-void rsh_str_append_n(strbuf_t *str, const char* text, size_t length)
+void rsh_str_append_n(strbuf_t* str, const char* text, size_t length)
 {
 	rsh_str_ensure_length(str, str->len + length + 1);
 	memcpy(str->str + str->len, text, length);
@@ -661,7 +669,7 @@ void rsh_str_append_n(strbuf_t *str, const char* text, size_t length)
  * @param str pointer to the string buffer
  * @param text the null-terminated string to append
  */
-void rsh_str_append(strbuf_t *str, const char* text)
+void rsh_str_append(strbuf_t* str, const char* text)
 {
 	rsh_str_append_n(str, text, strlen(text));
 }

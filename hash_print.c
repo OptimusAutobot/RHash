@@ -1,25 +1,23 @@
 /* hash_print.c - output hash sums using printf-like format */
 
-#include <string.h>
-#include <stdlib.h>
-#include <ctype.h>
+#include "hash_print.h"
+#include "calc_sums.h"
+#include "output.h"
+#include "parse_cmdline.h"
+#include "win_utils.h"
+#include "librhash/rhash.h"
 #include <assert.h>
+#include <ctype.h>
+#include <stdlib.h>
+#include <string.h>
 #ifdef _WIN32
 # include <fcntl.h>
 # include <io.h>
 #endif /* _WIN32 */
 
-#include "hash_print.h"
-#include "calc_sums.h"
-#include "common_func.h"
-#include "file.h"
-#include "parse_cmdline.h"
-#include "win_utils.h"
-#include "librhash/rhash.h"
-
 /*=========================================================================
-* Formatted output functions and structures
-*=========================================================================*/
+ * Formatted output functions and structures
+ *=========================================================================*/
 
 /**
  * The table with information about hash functions.
@@ -36,15 +34,15 @@ enum {
 	PRINT_FLAG_HEX    = 0x0800000,
 	PRINT_FLAG_BASE32 = 0x1000000,
 	PRINT_FLAG_BASE64 = 0x2000000,
-	PRINT_FLAG_PAD_WITH_ZERO = 0x4000000,
+	PRINT_FLAG_URLENCODE = 0x4000000,
+	PRINT_FLAG_PAD_WITH_ZERO = 0x8000000,
 	PRINT_FLAGS_ALL = PRINT_FLAG_UPPERCASE | PRINT_FLAG_PAD_WITH_ZERO | PRINT_FLAG_RAW
-		| PRINT_FLAG_HEX | PRINT_FLAG_BASE32 | PRINT_FLAG_BASE64,
+		| PRINT_FLAG_HEX | PRINT_FLAG_BASE32 | PRINT_FLAG_BASE64 | PRINT_FLAG_URLENCODE,
 	PRINT_STR = 0x10000000,
 	PRINT_ZERO,
 	PRINT_NEWLINE,
 	PRINT_FILEPATH,
 	PRINT_BASENAME,
-	PRINT_URLNAME,
 	PRINT_SIZE,
 	PRINT_MTIME /*PRINT_ATIME, PRINT_CTIME*/
 };
@@ -60,7 +58,7 @@ static print_item* parse_percent_item(const char** str);
  * @param data optional string to store
  * @return allocated print_item
  */
-static print_item* new_print_item(unsigned flags, unsigned hash_id, const char *data)
+static print_item* new_print_item(unsigned flags, unsigned hash_id, const char* data)
 {
 	print_item* item = (print_item*)rsh_malloc(sizeof(print_item));
 	item->flags = flags;
@@ -78,7 +76,7 @@ static print_item* new_print_item(unsigned flags, unsigned hash_id, const char *
  *   is changed to point to the next symbol after parsed sequence
  * @return result character
  */
-static char parse_escaped_char(const char **pformat)
+static char parse_escaped_char(const char** pformat)
 {
 	const char* start = *pformat;
 	switch ( *((*pformat)++) ) {
@@ -92,7 +90,7 @@ static char parse_escaped_char(const char **pformat)
 			if ( IS_HEX(**pformat) ) {
 				int ch;
 				ch = (**pformat <= '9' ? **pformat & 15 : (**pformat + 9) & 15);
-				(*pformat) ++;
+				(*pformat)++;
 				if (IS_HEX(**pformat)) {
 					/* read the second digit */
 					ch = 16 * ch + (**pformat <= '9' ? **pformat & 15 : (**pformat + 9) & 15);
@@ -123,10 +121,13 @@ static char parse_escaped_char(const char **pformat)
  *
  * @return a print_item list with parsed information
  */
-print_item* parse_print_string(const char* format, unsigned *sum_mask)
+print_item* parse_print_string(const char* format, unsigned* sum_mask)
 {
-	char *buf, *p;
-	print_item *list = NULL, **tail, *item = NULL;
+	char* buf;
+	char* p;
+	print_item* list = NULL;
+	print_item* item = NULL;
+	print_item** tail;
 
 	buf = p = (char*)rsh_malloc( strlen(format) + 1 );
 	tail = &list;
@@ -186,21 +187,22 @@ print_item* parse_print_string(const char* format, unsigned *sum_mask)
  *
  * @param name printf directive name (not a 0-terminated)
  * @param length name length
+ * @param flags pointer to unsigned variable to receive print flags
  * @return directive id on success, 0 on fail
  */
-static unsigned printf_name_to_id(const char* name, size_t length, unsigned *flags)
+static unsigned printf_name_to_id(const char* name, size_t length, unsigned* flags)
 {
 	char buf[20];
 	size_t i;
-	print_hash_info *info = hash_info_table;
+	print_hash_info* info = hash_info_table;
 	unsigned bit;
 
-	if (length > (sizeof(buf)-1)) return 0;
+	if (length > (sizeof(buf) - 1)) return 0;
 	for (i = 0; i < length; i++) buf[i] = tolower(name[i]);
 
-	/* check for old '%{urlname}' directive for compatibility */
+	/* check for legacy '%{urlname}' directive for compatibility */
 	if (length == 7 && memcmp(buf, "urlname", 7) == 0) {
-		*flags = PRINT_URLNAME;
+		*flags = PRINT_BASENAME | PRINT_FLAG_URLENCODE;
 		return 0;
 	} else if (length == 5 && memcmp(buf, "mtime", 5) == 0) {
 		*flags = PRINT_MTIME;
@@ -215,9 +217,10 @@ static unsigned printf_name_to_id(const char* name, size_t length, unsigned *fla
 }
 
 /**
- * Parse a token followed by a percent sign in a printf-like format string.
+ * Parse a token following a percent sign in a printf-like format string.
  *
- * @return a print_item with parsed information
+ * @param str a pointer to the string, containing the token to parse
+ * @return print_item with parsed information
  */
 print_item* parse_percent_item(const char** str)
 {
@@ -227,22 +230,24 @@ print_item* parse_percent_item(const char** str)
 	unsigned modifier_flags = 0;
 	int id_found = 0;
 	int width = 0;
-	int pad_with_zero_bit = 0;
 	print_item* item = NULL;
 
-	static const char *short_hash = "CMHTGWRAE";
-	static const char *short_other = "Llpfus";
+	static const char* short_hash = "CMHTGWRAE";
+	static const char* short_other = "Llpfs";
 	static const unsigned hash_ids[] = {
 		RHASH_CRC32, RHASH_MD5, RHASH_SHA1, RHASH_TTH, RHASH_GOST12_256,
 		RHASH_WHIRLPOOL, RHASH_RIPEMD160, RHASH_AICH, RHASH_ED2K
 	};
 	static const unsigned other_flags[] = {
-		PRINT_ED2K_LINK, PRINT_ED2K_LINK, PRINT_FILEPATH, PRINT_BASENAME,
-		PRINT_URLNAME, PRINT_SIZE
+		(PRINT_ED2K_LINK | PRINT_FLAG_UPPERCASE), PRINT_ED2K_LINK,
+		PRINT_FILEPATH, PRINT_BASENAME, PRINT_SIZE
 	};
 	/* detect the padding by zeros */
 	if (*format == '0') {
-		pad_with_zero_bit = PRINT_FLAG_PAD_WITH_ZERO;
+		modifier_flags = PRINT_FLAG_PAD_WITH_ZERO;
+		format++;
+	} else if ((*format & ~0x20) == 'U') {
+		modifier_flags = (*format & 0x20 ? PRINT_FLAG_URLENCODE : PRINT_FLAG_URLENCODE | PRINT_FLAG_UPPERCASE);
 		format++;
 	}
 
@@ -262,22 +267,20 @@ print_item* parse_percent_item(const char** str)
 	}
 	for (; isdigit((unsigned char)*format); format++) width = 10 * width + (*format - '0');
 
-	/* if a complicated token enconuntered */
+	/* if a complicated token encountered */
 	if (*format == '{') {
 		/* parse the token of the kind "%{some-token}" */
-		const char* p = ++format;
+		const char* p = format + 1;
 		for (; isalnum((unsigned char)*p) || (*p == '-'); p++);
 		if (*p == '}') {
-			hash_id = printf_name_to_id(format, (int)(p - (format)), &modifier_flags);
-			format--;
-			if (hash_id || modifier_flags == PRINT_URLNAME || modifier_flags == PRINT_MTIME) {
+			unsigned flags = 0;
+			hash_id = printf_name_to_id(format + 1, p - (format + 1), &flags);
+			if (hash_id || (flags & PRINT_FLAG_URLENCODE) || flags == PRINT_MTIME) {
 				/* set uppercase flag if the first letter of printf-entity is uppercase */
-				modifier_flags |= (format[1] & 0x20 ? 0 : PRINT_FLAG_UPPERCASE);
+				modifier_flags |= flags | (format[1] & 0x20 ? 0 : PRINT_FLAG_UPPERCASE);
 				format = p;
 				id_found = 1;
 			}
-		} else {
-			format--;
 		}
 	}
 
@@ -285,27 +288,27 @@ print_item* parse_percent_item(const char** str)
 	if (!id_found) {
 		const char upper = *format & ~0x20;
 		/* if the string terminated just after the '%' character */
-		if ( *format == '\0' ) return NULL;
+		if (*format == '\0')
+			return NULL;
 		/* look for a known token */
-		if ( (p = strchr(short_hash, upper)) ) {
+		if (upper && (p = strchr(short_hash, upper))) {
 			assert( (p - short_hash) < (int)(sizeof(hash_ids) / sizeof(unsigned)) );
 			hash_id = hash_ids[p - short_hash];
 			modifier_flags |= (*format & 0x20 ? 0 : PRINT_FLAG_UPPERCASE);
 		}
-		else if ( (p = strchr(short_other, *format)) ) {
+		else if ((p = strchr(short_other, *format))) {
 			assert( (p - short_other) < (int)(sizeof(other_flags) / sizeof(unsigned)) );
-			modifier_flags = other_flags[p - short_other];
-
-			if (modifier_flags == PRINT_ED2K_LINK) {
-				modifier_flags |= (*p & 0x20 ? 0 : PRINT_FLAG_UPPERCASE);
+			modifier_flags |= other_flags[p - short_other];
+			if ((modifier_flags & ~PRINT_FLAGS_ALL) == PRINT_ED2K_LINK)
 				hash_id = RHASH_ED2K | RHASH_AICH;
-			}
+		} else if ((modifier_flags & PRINT_FLAG_URLENCODE) != 0) {
+			/* handle legacy token: '%u' -> '%uf' */
+			modifier_flags |= PRINT_BASENAME;
+			format--;
 		} else {
 			return 0; /* no valid token found */
 		}
 	}
-	modifier_flags |= pad_with_zero_bit;
-
 	item = new_print_item(modifier_flags, hash_id, NULL);
 	item->width = width;
 	*str = ++format;
@@ -319,21 +322,18 @@ print_item* parse_percent_item(const char** str)
  * @param filename the file name
  * @param filesize the file size
  * @param sums the file hash sums
+ * @return 0 on success, -1 on fail with error code stored in errno
  */
-static void fprint_ed2k_url(FILE* out, struct file_info *info, int print_type)
+static int fprint_ed2k_url(FILE* out, struct file_info* info, int print_type)
 {
-	const char *filename = get_basename(file_info_get_utf8_print_path(info));
+	const char* filename = file_get_print_path(info->file, FPathUtf8 | FPathBaseName | FPathNotNull);
 	int upper_case = (print_type & PRINT_FLAG_UPPERCASE ? RHPR_UPPERCASE : 0);
-	int len = urlencode(NULL, filename) + int_len(info->size) + (info->sums_flags & RHASH_AICH ? 84 : 49);
-	char* buf = (char*)rsh_malloc( len + 1 );
+	char buf[104];
 	char* dst = buf;
-
-	assert(info->sums_flags & (RHASH_ED2K|RHASH_AICH));
+	assert(info->sums_flags & RHASH_ED2K);
 	assert(info->rctx);
-
-	strcpy(dst, "ed2k://|file|");
-	dst += 13;
-	dst += urlencode(dst, filename);
+	if (rsh_fprintf(out, "ed2k://|file|") < 0 || fprint_urlencoded(out, filename, upper_case) < 0)
+		return -1;
 	*dst++ = '|';
 	sprintI64(dst, info->size, 0);
 	dst += strlen(dst);
@@ -346,8 +346,7 @@ static void fprint_ed2k_url(FILE* out, struct file_info *info, int print_type)
 		dst += 32;
 	}
 	strcpy(dst, "|/");
-	rsh_fprintf(out, "%s", buf);
-	free(buf);
+	return PRINTF_RES(rsh_fprintf(out, "%s", buf));
 }
 
 /**
@@ -357,136 +356,140 @@ static void fprint_ed2k_url(FILE* out, struct file_info *info, int print_type)
  * @param filesize the 64-bit integer to output, usually a file size
  * @param width minimal width of integer to output
  * @param flag =1 if the integer shall be prepended by zeros
+ * @return 0 on success, -1 on fail with error code stored in errno
  */
-static void fprintI64(FILE* out, uint64_t filesize, int width, int zero_pad)
+static int fprintI64(FILE* out, uint64_t u64, int width, int zero_pad)
 {
-	char *buf = (char*)rsh_malloc(width > 40 ? width + 1 : 41);
-	int len = int_len(filesize);
-	sprintI64(buf, filesize, width);
+	char* buf = (char*)rsh_malloc(width > 40 ? width + 1 : 41);
+	int len = int_len(u64);
+	int res;
+	sprintI64(buf, u64, width);
 	if (len < width && zero_pad) {
-		memset(buf, '0', width-len);
+		memset(buf, '0', width - len);
 	}
-	rsh_fprintf(out, "%s", buf);
+	res = PRINTF_RES(rsh_fprintf(out, "%s", buf));
 	free(buf);
+	return res;
 }
 
 /**
-* Print time formatted as hh:mm.ss YYYY-MM-DD to a file stream.
-*
-* @param out the stream to print the time to
-* @param time the time to print
-*/
-static void print_time(FILE *out, time_t time)
+ * Print time formatted as 'YYYY-MM-DD hh:mm:ss' to a file stream.
+ *
+ * @param out the stream to print the time to
+ * @param time the time to print
+ * @param sfv_format if =1, then change time format to 'hh:mm.ss YYYY-MM-DD'
+ * @return 0 on success, -1 on fail with error code stored in errno
+ */
+static int print_time64(FILE* out, uint64_t time64, int sfv_format)
 {
-	struct tm *t = localtime(&time);
-	static struct tm zero_tm;
-	if (t == NULL) {
-		/* if a strange day, then print `00:00.00 1900-01-00' */
-		t = &zero_tm;
-		t->tm_hour = t->tm_min = t->tm_sec =
-			t->tm_year = t->tm_mon = t->tm_mday = 0;
+	time_t time = (time_t)time64;
+	struct tm* t = localtime(&time);
+	char* format = (sfv_format ? "%02u:%02u.%02u %4u-%02u-%02u" :
+		"%4u-%02u-%02u %02u:%02u:%02u");
+	int date_index = (sfv_format ? 3 : 0);
+	unsigned d[6];
+	if (!!t) {
+		d[date_index + 0] = t->tm_year + 1900;
+		d[date_index + 1] = t->tm_mon + 1;
+		d[date_index + 2] = t->tm_mday;
+		d[3 - date_index] = t->tm_hour;
+		d[4 - date_index] = t->tm_min;
+		d[5 - date_index] = t->tm_sec;
+	} else {
+		/* if got a strange day, then print the date '1900-01-00 00:00:00' */
+		memset(d, 0, sizeof(d));
+		d[date_index + 0] = 1900;
+		d[date_index + 1] = 1;
 	}
-	rsh_fprintf(out, "%02u:%02u.%02u %4u-%02u-%02u", t->tm_hour, t->tm_min,
-		t->tm_sec, (1900 + t->tm_year), t->tm_mon + 1, t->tm_mday);
+	return PRINTF_RES(rsh_fprintf(out, format, d[0], d[1], d[2], d[3], d[4], d[5]));
 }
 
 /**
-* Print time formatted as hh:mm.ss YYYY-MM-DD to a file stream.
-*
-* @param out the stream to print the time to
-* @param time the time to print
-*/
-static void print_time64(FILE *out, uint64_t time)
-{
-	print_time(out, (time_t)time);
-}
-
-/**
- * Print formatted file information to given output stream.
+ * Print formatted file information to the given output stream.
  *
  * @param out the stream to print information to
  * @param list the format according to which information shall be printed
  * @param info the file information
+ * @return 0 on success, -1 on fail with error code stored in errno
  */
-void print_line(FILE* out, print_item* list, struct file_info *info)
+int print_line(FILE* out, print_item* list, struct file_info* info)
 {
-	const char* basename = get_basename(info->print_path), *tmp;
-	char *url = NULL, *ed2k_url = NULL;
 	char buffer[130];
+	int res = 0;
 #ifdef _WIN32
 	/* switch to binary mode to correctly output binary hashes */
 	int out_fd = _fileno(out);
 	int old_mode = (out_fd > 0 && !isatty(out_fd) ? _setmode(out_fd, _O_BINARY) : -1);
 #endif
 
-	for (; list; list = list->next) {
+	for (; list && res == 0; list = list->next) {
 		int print_type = list->flags & ~(PRINT_FLAGS_ALL);
 		size_t len;
 
 		/* output a hash function digest */
-		if (list->hash_id && print_type != PRINT_ED2K_LINK) {
+		if (!print_type) {
 			unsigned hash_id = list->hash_id;
 			int print_flags = (list->flags & PRINT_FLAG_UPPERCASE ? RHPR_UPPERCASE : 0)
 				| (list->flags & PRINT_FLAG_RAW ? RHPR_RAW : 0)
 				| (list->flags & PRINT_FLAG_BASE32 ? RHPR_BASE32 : 0)
 				| (list->flags & PRINT_FLAG_BASE64 ? RHPR_BASE64 : 0)
-				| (list->flags & PRINT_FLAG_HEX ? RHPR_HEX : 0);
+				| (list->flags & PRINT_FLAG_HEX ? RHPR_HEX : 0)
+				| (list->flags & PRINT_FLAG_URLENCODE ? RHPR_URLENCODE : 0);
 			if ((hash_id == RHASH_GOST94 || hash_id == RHASH_GOST94_CRYPTOPRO) && (opt.flags & OPT_GOST_REVERSE))
 				print_flags |= RHPR_REVERSE;
-
+			assert(hash_id != 0);
 			len = rhash_print(buffer, info->rctx, hash_id, print_flags);
 			assert(len < sizeof(buffer));
 
-			/* output the hash, exit on fail */
-			rsh_fwrite(buffer, 1, len, out);
-			continue;
+			/* output the hash, continue on success */
+			if (rsh_fwrite(buffer, 1, len, out) == len && !ferror(out))
+				continue;
+			res = -1;
+			break; /* exit on error */
 		}
 
 		/* output other special items: filepath, URL-encoded filename etc. */
 		switch (print_type) {
 			case PRINT_STR:
-				rsh_fprintf(out, "%s", list->data);
+				res = PRINTF_RES(rsh_fprintf(out, "%s", list->data));
 				break;
 			case PRINT_ZERO: /* the '\0' character */
-				rsh_fprintf(out, "%c", 0);
+				res = PRINTF_RES(rsh_fprintf(out, "%c", 0));
 				break;
 #ifdef _WIN32
 			case PRINT_NEWLINE:
-				rsh_fprintf(out, "%s", "\r\n");
+				res = PRINTF_RES(rsh_fprintf(out, "%s", "\r\n"));
 				break;
 #endif
 			case PRINT_FILEPATH:
-				rsh_fprintf(out, "%s", info->print_path);
-				break;
 			case PRINT_BASENAME: /* the filename without directory */
-				rsh_fprintf(out, "%s", basename);
-				break;
-			case PRINT_URLNAME: /* URL-encoded filename */
-				if (!url) {
-					tmp = get_basename(file_info_get_utf8_print_path(info));
-					url = (char*)rsh_malloc(urlencode(NULL, tmp) + 1);
-					urlencode(url, tmp);
+				if ((list->flags & PRINT_FLAG_URLENCODE) != 0) {
+					unsigned fflags = FPathUtf8 | FPathNotNull | (print_type == PRINT_BASENAME ? FPathBaseName : 0);
+					fprint_urlencoded(out, file_get_print_path(info->file, fflags),
+						(list->flags & PRINT_FLAG_UPPERCASE));
+				} else {
+					unsigned pflags = (print_type == PRINT_BASENAME ? OutBaseName : 0);
+					res = PRINTF_RES(fprintf_file_t(out, NULL, info->file, pflags));
 				}
-				rsh_fprintf(out, "%s", url);
 				break;
 			case PRINT_MTIME: /* the last-modified tine of the filename */
-				print_time64(out, info->file->mtime);
+				res = print_time64(out, info->file->mtime, 0);
 				break;
 			case PRINT_SIZE: /* file size */
-				fprintI64(out, info->size, list->width, (list->flags & PRINT_FLAG_PAD_WITH_ZERO));
+				res = fprintI64(out, info->size, list->width, (list->flags & PRINT_FLAG_PAD_WITH_ZERO));
 				break;
 			case PRINT_ED2K_LINK:
-				fprint_ed2k_url(out, info, list->flags);
+				res = fprint_ed2k_url(out, info, list->flags);
 				break;
 		}
 	}
-	free(url);
-	free(ed2k_url);
-	fflush(out);
+	if (res == 0 && fflush(out) < 0)
+		res = -1;
 #ifdef _WIN32
 	if (old_mode >= 0)
 		_setmode(out_fd, old_mode);
 #endif
+	return res;
 }
 
 /**
@@ -505,8 +508,8 @@ void free_print_list(print_item* list)
 }
 
 /*=========================================================================
-* initialization of internal data
-*=========================================================================*/
+ * Initialization of internal data
+ *=========================================================================*/
 
 /**
  * Initialize information about hashes, stored in the
@@ -518,14 +521,18 @@ void init_hash_info_table(void)
 	unsigned short_opt_mask = RHASH_CRC32 | RHASH_MD5 | RHASH_SHA1 | RHASH_TTH | RHASH_ED2K |
 		RHASH_AICH | RHASH_WHIRLPOOL | RHASH_RIPEMD160 | RHASH_GOST12_256 | OPT_ED2K_LINK;
 	char* short_opt = "cmhteawrgl";
-	print_hash_info *info = hash_info_table;
+	print_hash_info* info = hash_info_table;
 	unsigned fullmask = RHASH_ALL_HASHES | OPT_ED2K_LINK;
 
 	memset(hash_info_table, 0, sizeof(hash_info_table));
+	/* check consistency with librhash */
+	if (RHASH_HASH_COUNT != rhash_count())
+		log_warning("old, incompatible version of librhash is loaded\n");
 
 	for (bit = 1; bit && bit <= fullmask; bit = bit << 1) {
-		const char *p;
-		char *e, *d;
+		const char* p;
+		char* e;
+		char* d;
 
 		if (!(bit & fullmask))
 			continue;
@@ -567,11 +574,13 @@ void init_hash_info_table(void)
  */
 void init_printf_format(strbuf_t* out)
 {
-	const char* fmt, *tail = 0;
+	const char* fmt;
+	const char* tail = 0;
 	unsigned bit, index = 0;
 	int uppercase;
+	unsigned need_modifier = 0;
 	char up_flag;
-	unsigned force_base32_mask = 0;
+	char fmt_modifier = 'b';
 
 	if (!opt.fmt) {
 		/* print SFV header for CRC32 or if no hash sums options specified */
@@ -583,20 +592,21 @@ void init_printf_format(strbuf_t* out)
 
 	rsh_str_ensure_size(out, 1024); /* allocate big enough buffer */
 
-	if (opt.sum_flags & OPT_ED2K_LINK) {
-		rsh_str_append_n(out, "%l", 2);
+	if ((opt.sum_flags & OPT_ED2K_LINK) != 0) {
+		rsh_str_append_n(out, "%l\\n", 4);
 		out->str[1] &= up_flag;
 		return;
 	}
-
-	if (opt.sum_flags == 0) return;
+	if (opt.sum_flags == 0)
+		return;
 
 	if (opt.fmt == FMT_BSD) {
 		fmt = "\003(%p) = \001\\n";
 	} else if (opt.fmt == FMT_MAGNET) {
-		rsh_str_append(out, "magnet:?xl=%s&dn=%{urlname}");
+		rsh_str_append(out, "magnet:?xl=%s&dn=");
+		rsh_str_append(out, (uppercase ? "%Uf" : "%uf"));
 		fmt = "&xt=urn:\002:\001";
-		force_base32_mask = (RHASH_SHA1 | RHASH_BTIH);
+		need_modifier = RHASH_SHA1;
 		tail = "\\n";
 	} else if (opt.fmt == FMT_SIMPLE && 0 == (opt.sum_flags & (opt.sum_flags - 1))) {
 		fmt = "\001  %p\\n";
@@ -605,13 +615,19 @@ void init_printf_format(strbuf_t* out)
 		fmt = (opt.fmt == FMT_SFV ? " \001" : "  \001");
 		tail = "\\n";
 	}
+	if ((opt.flags & OPT_FMT_MODIFIERS) != 0)
+	{
+		need_modifier = 0xffffffff;
+		fmt_modifier = (opt.flags & OPT_HEX ? 'x' : opt.flags & OPT_BASE32 ? 'b' : 'B');
+	}
 
 	/* loop by hashes */
 	for (bit = 1 << index; bit && bit <= opt.sum_flags; bit = bit << 1, index++) {
-		const char *p;
-		print_hash_info *info;
+		const char* p;
+		print_hash_info* info;
 
-		if ((bit & opt.sum_flags) == 0) continue;
+		if ((bit & opt.sum_flags) == 0)
+			continue;
 		p = fmt;
 		info = &hash_info_table[index];
 
@@ -620,17 +636,19 @@ void init_printf_format(strbuf_t* out)
 
 		for (;;) {
 			int i;
-			while (*p >= 0x20) out->str[out->len++] = *(p++);
-			if (*p == 0) break;
+			while (*p >= 0x20)
+				out->str[out->len++] = *(p++);
+			if (*p == 0)
+				break;
 			switch ((int)*(p++)) {
 				case 1:
 					out->str[out->len++] = '%';
-					if ( (bit & force_base32_mask) != 0 ) {
-						out->str[out->len++] = 'b';
-					}
-					if (info->short_char) out->str[out->len++] = info->short_char & up_flag;
+					if ( (bit & need_modifier) != 0 )
+						out->str[out->len++] = fmt_modifier;
+					if (info->short_char)
+						out->str[out->len++] = info->short_char & up_flag;
 					else {
-						char *letter;
+						char* letter;
 						out->str[out->len++] = '{';
 						letter = out->str + out->len;
 						rsh_str_append(out, info->short_name);
@@ -644,62 +662,63 @@ void init_printf_format(strbuf_t* out)
 				case 3:
 					rsh_str_append(out, info->name);
 					i = (int)strlen(info->name);
-					for (i = (i < 5 ? 6 - i : 1); i > 0; i--) out->str[out->len++] = ' ';
+					for (i = (i < 5 ? 6 - i : 1); i > 0; i--)
+						out->str[out->len++] = ' ';
 					break;
 			}
 		}
 	}
-	if (tail) {
+	if (tail)
 		rsh_str_append(out, tail);
-	}
 	out->str[out->len] = '\0';
 }
 
 /*=========================================================================
-* SFV format output functions
-*=========================================================================*/
+ * SFV format output functions
+ *=========================================================================*/
 
 /**
-* Format file information into SFV line and print it to the specified stream.
-*
-* @param out the stream to print the file information to
-* @param file the file info to print
-* @return 0 on success, -1 on fail with error code stored in errno
-*/
-int print_sfv_header_line(FILE* out, file_t* file, const char* printpath)
+ * Format file information into SFV line and print it to the specified stream.
+ *
+ * @param out the stream to print the file information to
+ * @param file the file info to print
+ * @return 0 on success, -1 on fail with error code stored in errno
+ */
+int print_sfv_header_line(FILE* out, file_t* file)
 {
 	char buf[24];
 
-	/* skip stdin stream */
-	if ((file->mode & FILE_IFSTDIN) != 0) return 0;
-
-	/* skip file if it can't be opened with exclusive sharing rights */
-	if (file_is_write_locked(file)) return 0;
-
-	if (!printpath) printpath = file->path;
-	if (printpath[0] == '.' && IS_PATH_SEPARATOR(printpath[1])) printpath += 2;
-
+	/* skip stdin stream and message-texts passed by command-line */
+	if (FILE_ISSPECIAL(file))
+		return 0;
+	/* silently skip unreadable files, the access error will be reported later */
+	if (!file_is_readable(file))
+		return 0;
 	sprintI64(buf, file->size, 12);
-	rsh_fprintf(out, "; %s  ", buf);
-	print_time64(out, file->mtime);
-	rsh_fprintf(out, " %s\n", printpath);
-	return 0;
+	if (rsh_fprintf(out, "; %s  ", buf) < 0)
+		return -1;
+	print_time64(out, file->mtime, 1);
+	return PRINTF_RES(fprintf_file_t(out, " %s\n", file, 0));
 }
 
 /**
-* Print an SFV header banner. The banner consist of 3 comment lines,
-* with the program description and current time.
-*
-* @param out a stream to print to
-*/
-void print_sfv_banner(FILE* out)
+ * Print an SFV header banner. The banner consist of 3 comment lines,
+ * with the program description and current time.
+ *
+ * @param out a stream to print to
+ * @return 0 on success, -1 on fail with error code stored in errno
+ */
+int print_sfv_banner(FILE* out)
 {
 	time_t cur_time = time(NULL);
-	struct tm *t = localtime(&cur_time);
-	if (t) {
-		rsh_fprintf(out, _("; Generated by %s v%s on %4u-%02u-%02u at %02u:%02u.%02u\n"),
+	struct tm* t = localtime(&cur_time);
+	if (!t)
+		return 0;
+	if (rsh_fprintf(out,
+			_("; Generated by %s v%s on %4u-%02u-%02u at %02u:%02u.%02u\n"),
 			PROGRAM_NAME, get_version_string(),
-			(1900 + t->tm_year), t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
-		rsh_fprintf(out, _("; Written by Kravchenko Aleksey (Akademgorodok) - http://rhash.sf.net/\n;\n"));
-	}
+			(1900 + t->tm_year), t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec) < 0)
+		return -1;
+	return PRINTF_RES(rsh_fprintf(out,
+			_("; Written by Kravchenko Aleksey (Akademgorodok) - http://rhash.sf.net/\n;\n")));
 }

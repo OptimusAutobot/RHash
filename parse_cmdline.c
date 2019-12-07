@@ -1,18 +1,6 @@
 /* parse_cmdline.c - parsing of command line options */
 
-#include <assert.h>
-#include <locale.h>
-#include <stdarg.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#ifdef _WIN32
-# include <windows.h> /* for SetFileApisToOEM(), CharToOem() */
-#endif
-
 #include "parse_cmdline.h"
-#include "common_func.h"
-#include "file.h"
 #include "file_mask.h"
 #include "find_file.h"
 #include "hash_print.h"
@@ -20,6 +8,15 @@
 #include "rhash_main.h"
 #include "win_utils.h"
 #include "librhash/rhash.h"
+#include <assert.h>
+#include <locale.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#ifdef _WIN32
+# include <windows.h> /* for CommandLineToArgvW(), GetCommandLineW(), ... */
+#endif
 
 typedef struct options_t options_t;
 struct options_t conf_opt; /* config file parsed options */
@@ -45,6 +42,7 @@ static void print_help_line(const char* option, const char* format, ...)
 	va_start(args, format);
 	rsh_fprintf(rhash_data.out, "%s", option);
 	rsh_vfprintf(rhash_data.out, format, args);
+	va_end(args);
 }
 
 /**
@@ -90,7 +88,7 @@ static void print_help(void)
 	print_help_line("      --snefru128, --snefru256  ", hash_sum_format, "SNEFRU-128/256");
 	print_help_line("  -a, --all     ", _("Calculate all supported hashes.\n"));
 	print_help_line("  -c, --check   ", _("Check hash files specified by command line.\n"));
-	print_help_line("  -u, --update  ", _("Update hash files specified by command line.\n"));
+	print_help_line("  -u, --update=<file> ", _("Update the specified hash file.\n"));
 	print_help_line("  -e, --embed-crc  ", _("Rename files by inserting crc32 sum into name.\n"));
 	print_help_line("  -k, --check-embedded  ", _("Verify files by crc32 sum embedded in their names.\n"));
 	print_help_line("      --list-hashes  ", _("List the names of supported hashes, one per line.\n"));
@@ -101,7 +99,7 @@ static void print_help(void)
 	print_help_line("  -m, --message=<text> ", _("Process the text message.\n"));
 	print_help_line("      --skip-ok ", _("Don't print OK messages for successfully verified files.\n"));
 	print_help_line("  -i, --ignore-case  ", _("Ignore case of filenames when updating hash files.\n"));
-	print_help_line("      --percents   ", _("Show percents, while calculating or checking hashes.\n"));
+	print_help_line("  -P, --percents   ", _("Show percents, while calculating or checking hashes.\n"));
 	print_help_line("      --speed   ", _("Output per-file and total processing speed.\n"));
 	print_help_line("      --maxdepth=<n> ", _("Descend at most <n> levels of directories.\n"));
 	if (rhash_is_openssl_supported())
@@ -111,6 +109,10 @@ static void print_help(void)
 	print_help_line("      --sfv     ", _("Print hash sums, using SFV format (default).\n"));
 	print_help_line("      --bsd     ", _("Print hash sums, using BSD-like format.\n"));
 	print_help_line("      --simple  ", _("Print hash sums, using simple format.\n"));
+	print_help_line("      --hex  ", _("Print hash sums in hexadecimal format.\n"));
+	print_help_line("      --base32", _("Print hash sums in Base32 format.\n"));
+	print_help_line("  -b, --base64", _("Print hash sums in Base64 format.\n"));
+
 	print_help_line("  -g, --magnet  ", _("Print hash sums  as magnet links.\n"));
 	print_help_line("      --torrent ", _("Create torrent files.\n"));
 #ifdef _WIN32
@@ -150,7 +152,7 @@ enum file_suffix_type {
  * @param path the path of the file
  * @param type the type of the option
  */
-static void add_special_file(options_t *o, tstr_t path, unsigned file_mode)
+static void add_special_file(options_t* o, tstr_t path, unsigned file_mode)
 {
 	if (o->search_data) {
 		file_search_add_file(o->search_data, path, file_mode);
@@ -165,7 +167,7 @@ static void add_special_file(options_t *o, tstr_t path, unsigned file_mode)
  * @param accept_string comma delimited string to parse
  * @param type the type of the option
  */
-static void add_file_suffix(options_t *o, char* accept_string, unsigned type)
+static void add_file_suffix(options_t* o, char* accept_string, unsigned type)
 {
 	file_mask_array** ptr = (type == MASK_ACCEPT ? &o->files_accept :
 		type == MASK_EXCLUDE ? &o->files_exclude : &o->crc_accept);
@@ -174,13 +176,13 @@ static void add_file_suffix(options_t *o, char* accept_string, unsigned type)
 }
 
 /**
-* Process --bt_announce option.
-*
-* @param o pointer to the options structure
-* @param announce_url the url to parse
-* @param unused a tottaly unused parameter
-*/
-static void bt_announce(options_t *o, char* announce_url, unsigned unused)
+ * Process --bt_announce option.
+ *
+ * @param o pointer to the options structure
+ * @param announce_url the url to parse
+ * @param unused a tottaly unused parameter
+ */
+static void bt_announce(options_t* o, char* announce_url, unsigned unused)
 {
 	(void)unused;
 	/* skip empty string */
@@ -196,18 +198,19 @@ static void bt_announce(options_t *o, char* announce_url, unsigned unused)
  * @param openssl_hashes comma delimited string with hash names
  * @param type ignored
  */
-static void openssl_flags(options_t *o, char* openssl_hashes, unsigned type)
+static void openssl_flags(options_t* o, char* openssl_hashes, unsigned type)
 {
 	(void)type;
 	if (rhash_is_openssl_supported())
 	{
 		rhash_uptr_t openssl_supported_hashes = rhash_get_openssl_supported_mask();
-		char *cur, *next;
+		char* cur;
+		char* next;
 		o->openssl_mask = 0x80000000; /* turn off using default mask */
 
 		/* set the openssl_mask */
 		for (cur = openssl_hashes; cur && *cur; cur = next) {
-			print_hash_info *info = hash_info_table;
+			print_hash_info* info = hash_info_table;
 			unsigned bit;
 			size_t length;
 			next = strchr(cur, ',');
@@ -236,7 +239,7 @@ static void openssl_flags(options_t *o, char* openssl_hashes, unsigned type)
  *
  * @param o pointer to the options structure to update
  */
-static void accept_video(options_t *o)
+static void accept_video(options_t* o)
 {
 	add_file_suffix(o, ".avi,.ogm,.mkv,.mp4,.mpeg,.mpg,.asf,.rm,.wmv,.vob", MASK_ACCEPT);
 }
@@ -259,7 +262,7 @@ static void nya(void)
  * @param number the string containing the max-depth number
  * @param param unused parameter
  */
-static void set_max_depth(options_t *o, char* number, unsigned param)
+static void set_max_depth(options_t* o, char* number, unsigned param)
 {
 	(void)param;
 	if (strspn(number, "0123456789") < strlen(number)) {
@@ -276,7 +279,7 @@ static void set_max_depth(options_t *o, char* number, unsigned param)
  * @param number string containing the piece length number
  * @param param unused parameter
  */
-static void set_bt_piece_length(options_t *o, char* number, unsigned param)
+static void set_bt_piece_length(options_t* o, char* number, unsigned param)
 {
 	(void)param;
 	if (strspn(number, "0123456789") < strlen(number)) {
@@ -293,7 +296,7 @@ static void set_bt_piece_length(options_t *o, char* number, unsigned param)
  * @param sep file separator, can be only '/' or '\'
  * @param param unused parameter
  */
-static void set_path_separator(options_t *o, char* sep, unsigned param)
+static void set_path_separator(options_t* o, char* sep, unsigned param)
 {
 	(void)param;
 	if ((*sep == '/' || *sep == '\\') && sep[1] == 0) {
@@ -305,7 +308,7 @@ static void set_path_separator(options_t *o, char* sep, unsigned param)
 		o->path_separator = '/';
 #endif
 	} else {
-		log_error(_("path-separator is not '/' or '\\': %s\n"), sep);
+		log_error(_("path-separator is neither '/' nor '\\': %s\n"), sep);
 		rsh_exit(2);
 	}
 }
@@ -347,7 +350,7 @@ cmdline_opt_t cmdline_opt[] =
 	/* program modes */
 	{ F_UFLG, 'c',   0, "check",  &opt.mode, MODE_CHECK },
 	{ F_UFLG, 'k',   0, "check-embedded",  &opt.mode, MODE_CHECK_EMBEDDED },
-	{ F_UFLG, 'u',   0, "update", &opt.mode, MODE_UPDATE },
+	{ F_TSTR, 'u',   0, "update", &opt.update_file, 0 },
 	{ F_UFLG, 'B',   0, "benchmark", &opt.mode, MODE_BENCHMARK },
 	{ F_UFLG,   0,   0, "torrent", &opt.mode, MODE_TORRENT },
 	{ F_VFNC,   0,   0, "list-hashes", list_hashes, 0 },
@@ -402,14 +405,14 @@ cmdline_opt_t cmdline_opt[] =
 
 	/* other options */
 	{ F_UFLG, 'r', 'R', "recursive", &opt.flags, OPT_RECURSIVE },
-	{ F_TFNC, 'm',   0, "message", add_special_file, FILE_IFDATA },
-	{ F_TFNC,   0,   0, "file-list", add_special_file, FILE_IFLIST },
+	{ F_TFNC, 'm',   0, "message", add_special_file, FileIsData },
+	{ F_TFNC,   0,   0, "file-list", add_special_file, FileIsList },
 	{ F_UFLG,   0,   0, "follow",  &opt.flags, OPT_FOLLOW },
 	{ F_UFLG, 'v',   0, "verbose", &opt.flags, OPT_VERBOSE },
 	{ F_UFLG,   0,   0, "gost-reverse", &opt.flags, OPT_GOST_REVERSE },
 	{ F_UFLG,   0,   0, "skip-ok", &opt.flags, OPT_SKIP_OK },
 	{ F_UFLG, 'i',   0, "ignore-case", &opt.flags, OPT_IGNORE_CASE },
-	{ F_UENC,   0,   0, "percents", &opt.flags, OPT_PERCENTS },
+	{ F_UENC, 'P',   0, "percents", &opt.flags, OPT_PERCENTS },
 	{ F_UFLG,   0,   0, "speed",  &opt.flags, OPT_SPEED },
 	{ F_UFLG, 'e',   0, "embed-crc",  &opt.flags, OPT_EMBED_CRC },
 	{ F_CSTR,   0,   0, "embed-crc-delimiter", &opt.embed_crc_delimiter, 0 },
@@ -427,15 +430,18 @@ cmdline_opt_t cmdline_opt[] =
 	{ F_UFNC,   0,   0, "bt-announce", bt_announce, 0 },
 	{ F_TSTR,   0,   0, "bt-batch", &opt.bt_batch_file, 0 },
 	{ F_UFLG,   0,   0, "benchmark-raw", &opt.flags, OPT_BENCH_RAW },
+	{ F_UFLG,   0,   0, "hex", &opt.flags, OPT_HEX },
+	{ F_UFLG,   0,   0, "base32", &opt.flags, OPT_BASE32 },
+	{ F_UFLG, 'b',   0, "base64", &opt.flags, OPT_BASE64 },
 	{ F_PFNC,   0,   0, "openssl", openssl_flags, 0 },
 
 #ifdef _WIN32 /* code pages (windows only) */
 	{ F_UENC,   0,   0, "utf8", &opt.flags, OPT_UTF8 },
-	{ F_UENC,   0,   0, "win",  &opt.flags, OPT_ANSI },
-	{ F_UENC,   0,   0, "dos",  &opt.flags, OPT_OEM },
+	{ F_UENC,   0,   0, "win",  &opt.flags, OPT_ENC_WIN },
+	{ F_UENC,   0,   0, "dos",  &opt.flags, OPT_ENC_DOS },
 	/* legacy: the following two options are left for compatibility */
-	{ F_UENC,   0,   0, "ansi", &opt.flags, OPT_ANSI },
-	{ F_UENC,   0,   0, "oem",  &opt.flags, OPT_OEM },
+	{ F_UENC,   0,   0, "ansi", &opt.flags, OPT_ENC_WIN },
+	{ F_UENC,   0,   0, "oem",  &opt.flags, OPT_ENC_DOS },
 #endif
 	{ 0,0,0,0,0,0 }
 };
@@ -466,7 +472,7 @@ static void fail_on_unknow_option(const char* option_name)
 /* structure to store command line option information */
 typedef struct parsed_option_t
 {
-	cmdline_opt_t *o;
+	cmdline_opt_t* o;
 	const char* name; /* the parsed option name */
 	char buf[4];
 	void* parameter;  /* option argument, if required */
@@ -478,7 +484,7 @@ typedef struct parsed_option_t
  * @param opts the structure to store results of option processing
  * @param option option to process
  */
-static void apply_option(options_t *opts, parsed_option_t* option)
+static void apply_option(options_t* opts, parsed_option_t* option)
 {
 	cmdline_opt_t* o = option->o;
 	unsigned short option_type = o->type;
@@ -498,10 +504,10 @@ static void apply_option(options_t *opts, parsed_option_t* option)
 		}
 		else if (option_type == F_UFNC) {
 			/* convert from UTF-16 to UTF-8 */
-			value = wchar_to_cstr((wchar_t*)option->parameter, CP_UTF8, NULL);
+			value = convert_wcs_to_str((wchar_t*)option->parameter, ConvertToUtf8 | ConvertExact);
 		} else {
 			/* convert from UTF-16 */
-			value = w2c((wchar_t*)option->parameter);
+			value = convert_wcs_to_str((wchar_t*)option->parameter, ConvertToPrimaryEncoding);
 		}
 		rsh_vector_add_ptr(opt.mem, value);
 #else
@@ -525,10 +531,10 @@ static void apply_option(options_t *opts, parsed_option_t* option)
 	case F_TFNC:
 	case F_UFNC:
 		/* call option parameter handler */
-		( ( void(*)(options_t *, char*, unsigned) )o->ptr )(opts, value, o->param);
+		( (void(*)(options_t*, char*, unsigned))o->ptr )(opts, value, o->param);
 		break;
 	case F_VFNC:
-		( ( void(*)(options_t *) )o->ptr )(opts); /* call option handler */
+		( (void(*)(options_t*))o->ptr )(opts); /* call option handler */
 		break;
 	case F_PRNT:
 		log_msg("%s", (char*)o->ptr);
@@ -551,13 +557,14 @@ static const char* find_conf_file(void)
 #endif
 #define CONFIG_FILENAME "rhashrc"
 
-	char *dir1, *path;
+	char* dir1;
+	char* path;
 
 #ifndef _WIN32 /* Linux/Unix part */
 	/* first check for $XDG_CONFIG_HOME/rhash/rhashrc file */
 	if ( (dir1 = getenv("XDG_CONFIG_HOME")) ) {
-		dir1 = make_path(dir1, "rhash");
-		path = make_path(dir1, CONFIG_FILENAME);
+		dir1 = make_path(dir1, "rhash", 0);
+		path = make_path(dir1, CONFIG_FILENAME, 0);
 		free(dir1);
 		if (is_regular_file(path)) {
 			rsh_vector_add_ptr(opt.mem, path);
@@ -567,7 +574,7 @@ static const char* find_conf_file(void)
 	}
 	/* then check for $HOME/.rhashrc file */
 	if ( (dir1 = getenv("HOME")) ) {
-		path = make_path(dir1, ".rhashrc");
+		path = make_path(dir1, ".rhashrc", 0);
 		if (is_regular_file(path)) {
 			rsh_vector_add_ptr(opt.mem, path);
 			return (conf_opt.config_file = path);
@@ -581,11 +588,12 @@ static const char* find_conf_file(void)
 	}
 
 #else /* _WIN32 */
+	wchar_t* program_dir = get_program_dir();
 
 	/* first check for the %APPDATA%\RHash\rhashrc config */
 	if ( (dir1 = getenv("APPDATA")) ) {
-		dir1 = make_path(dir1, "RHash");
-		path = make_path(dir1, CONFIG_FILENAME);
+		dir1 = make_path(dir1, "RHash", 0);
+		path = make_path(dir1, CONFIG_FILENAME, 0);
 		free(dir1);
 		if (is_regular_file(path)) {
 			rsh_vector_add_ptr(opt.mem, path);
@@ -597,8 +605,8 @@ static const char* find_conf_file(void)
 	/* then check for %HOMEDRIVE%%HOMEPATH%\rhashrc */
 	/* note that %USERPROFILE% is generally not a user home dir */
 	if ( (dir1 = getenv("HOMEDRIVE")) && (path = getenv("HOMEPATH"))) {
-		dir1 = make_path(dir1, path);
-		path = make_path(dir1, CONFIG_FILENAME);
+		dir1 = make_path(dir1, path, 0);
+		path = make_path(dir1, CONFIG_FILENAME, 0);
 		free(dir1);
 		if (is_regular_file(path)) {
 			rsh_vector_add_ptr(opt.mem, path);
@@ -606,10 +614,10 @@ static const char* find_conf_file(void)
 		}
 		free(path);
 	}
-	
+
 	/* check for ${PROGRAM_DIR}\rhashrc */
-	if (rhash_data.program_dir && (dir1 = w2c(rhash_data.program_dir))) {
-		path = make_path(dir1, CONFIG_FILENAME);
+	if (program_dir && program_dir[0] && (dir1 = convert_wcs_to_str(program_dir, ConvertToPrimaryEncoding))) {
+		path = make_path(dir1, CONFIG_FILENAME, 0);
 		free(dir1);
 		if (is_regular_file(path)) {
 			rsh_vector_add_ptr(opt.mem, path);
@@ -642,7 +650,7 @@ static int read_config(void)
 
 	if (!find_conf_file()) return 0;
 
-	file_init(&file, conf_opt.config_file, FILE_OPT_DONT_FREE_PATH);
+	file_init_by_print_path(&file, 0, conf_opt.config_file, 0);
 	fd = file_fopen(&file, FOpenRead);
 	file_cleanup(&file);
 	if (!fd) return -1;
@@ -651,7 +659,8 @@ static int read_config(void)
 		size_t index;
 		cmdline_opt_t* t;
 		char* line = str_trim(buf);
-		char  *name, *value;
+		char* name;
+		char* value;
 
 		if (*line == 0 || IS_COMMENT(*line)) continue;
 
@@ -708,11 +717,11 @@ static int read_config(void)
  * @param option structure to receive the parsed option info
  * @param parg pointer to a command line argument
  */
-static void parse_long_option(parsed_option_t* option, rsh_tchar ***parg)
+static void parse_long_option(parsed_option_t* option, rsh_tchar*** parg)
 {
 	size_t length;
 	rsh_tchar* eq_sign;
-	cmdline_opt_t *t;
+	cmdline_opt_t* t;
 	char* name;
 
 #ifdef _WIN32
@@ -739,7 +748,8 @@ static void parse_long_option(parsed_option_t* option, rsh_tchar ***parg)
 		length -= 2;
 	} else fail = 1;
 
-	if (fail) fail_on_unknow_option(w2c(**parg));
+	if (fail)
+		fail_on_unknow_option(convert_wcs_to_str(**parg, ConvertToUtf8));
 #else
 	option->name = **parg;
 	name =  **parg + 2; /* skip "--" */
@@ -768,7 +778,7 @@ struct parsed_cmd_line_t
 {
 	blocks_vector_t options; /* array of parsed options */
 	int  argc;
-	char **argv;
+	char** argv;
 #ifdef _WIN32
 	rsh_tchar** warg; /* program arguments in Unicode */
 #endif
@@ -795,8 +805,9 @@ static void parse_cmdline_options(struct parsed_cmd_line_t* cmd_line)
 {
 	int argc;
 	int b_opt_end = 0;
-	rsh_tchar **parg, **end_arg;
-	parsed_option_t *next_opt;
+	rsh_tchar** parg;
+	rsh_tchar** end_arg;
+	parsed_option_t* next_opt;
 
 #ifdef _WIN32
 	parg = cmd_line->warg = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -838,13 +849,13 @@ static void parse_cmdline_options(struct parsed_cmd_line_t* cmd_line)
 			/* parse short options. A string of several characters is interpreted
 			 * as separate short options */
 			for (ptr = *parg + 1; *ptr; ptr++) {
-				cmdline_opt_t *t;
+				cmdline_opt_t* t;
 				char ch = (char)*ptr;
 
 #ifdef _WIN32
 				if (((unsigned)*ptr) >= 128) {
 					ptr[1] = 0;
-					fail_on_unknow_option(w2c(ptr));
+					fail_on_unknow_option(convert_wcs_to_str(ptr, ConvertToUtf8));
 				}
 #endif
 				next_opt = new_option(cmd_line);
@@ -882,7 +893,7 @@ static void parse_cmdline_options(struct parsed_cmd_line_t* cmd_line)
  *
  * @param cmd_line the parsed options information
  */
-static void apply_cmdline_options(struct parsed_cmd_line_t *cmd_line)
+static void apply_cmdline_options(struct parsed_cmd_line_t* cmd_line)
 {
 	size_t count = cmd_line->options.size;
 	size_t i;
@@ -908,8 +919,16 @@ static void apply_cmdline_options(struct parsed_cmd_line_t *cmd_line)
 		if (!opt.sum_flags) opt.sum_flags = conf_opt.sum_flags;
 	}
 
-	if (!opt.mode)  opt.mode = conf_opt.mode;
-	opt.flags |= conf_opt.flags; /* copy all non-sum options */
+	if (!opt.mode && !opt.update_file) {
+		opt.mode = conf_opt.mode;
+		opt.update_file = conf_opt.update_file;
+	}
+	if (opt.update_file)
+		opt.mode |= MODE_UPDATE;
+
+	if (!(opt.flags & OPT_FMT_MODIFIERS))
+		opt.flags |= conf_opt.flags & OPT_FMT_MODIFIERS;
+	opt.flags |= conf_opt.flags & ~OPT_FMT_MODIFIERS; /* copy the rest of options */
 
 	if (opt.files_accept == 0)  {
 		opt.files_accept = conf_opt.files_accept;
@@ -947,15 +966,15 @@ static void apply_cmdline_options(struct parsed_cmd_line_t *cmd_line)
  */
 static void set_default_sums_flags(const char* progName)
 {
-	char *buf;
+	char* buf;
 	int res = 0;
 
 	/* remove directory name from path */
 	const char* p = strrchr(progName, '/');
-	if (p) progName = p+1;
+	if (p) progName = p + 1;
 #ifdef _WIN32
 	p = strrchr(progName, '\\');
-	if (p) progName = p+1;
+	if (p) progName = p + 1;
 #endif
 
 	/* convert progName to lowercase */
@@ -993,6 +1012,7 @@ static void set_default_sums_flags(const char* progName)
 	else if (strstr(buf, "ed2k")) res |= RHASH_ED2K;
 
 	if (strstr(buf, "sfv") && opt.fmt == 0) opt.fmt = FMT_SFV;
+	if (strstr(buf, "bsd") && opt.fmt == 0) opt.fmt = FMT_BSD;
 	if (strstr(buf, "magnet") && opt.fmt == 0) opt.fmt = FMT_MAGNET;
 
 	free(buf);
@@ -1019,35 +1039,54 @@ void options_destroy(struct options_t* o)
 	file_search_data_free(o->search_data);
 }
 
+enum {
+	ChkMode,
+	ChkFmt
+};
+
+/**
+ * Ensure that the specified bit_mask has only one bit set.
+ * Report error and exit the program on fail.
+ *
+ * @param what what to check
+ * @param bit_mask the bit_mask to check
+ */
+static void check_compatibility(int what, unsigned bit_mask)
+{
+	if ((bit_mask & (bit_mask - 1)) == 0)
+		return;
+	die(what == ChkMode ?
+		_("incompatible program modes\n") :
+		_("incompatible formatting options\n"));
+}
+
 /**
  * Check that options do not conflict with each other.
  * Also make some final options processing steps.
  */
 static void make_final_options_checks(void)
 {
-	unsigned ff; /* formatting flags */
+	unsigned ext_format_bits = (opt.printf_str ? 0x100 : 0) | (opt.template_file ? 0x200 : 0);
 
 	if ((opt.flags & OPT_VERBOSE) && conf_opt.config_file) {
 		/* note that the first log_msg call shall be made after setup_output() */
 		log_msg(_("Config file: %s\n"), (conf_opt.config_file ? conf_opt.config_file : _("None")));
 	}
 
-	if (opt.bt_batch_file) opt.mode |= MODE_TORRENT;
-	if (opt.mode & MODE_TORRENT) opt.sum_flags |= RHASH_BTIH;
+	if (opt.bt_batch_file)
+		opt.mode |= MODE_TORRENT;
+	if (opt.mode & MODE_TORRENT)
+		opt.sum_flags |= RHASH_BTIH;
 
-	/* check that no more than one program mode specified */
-	if (opt.mode & (opt.mode - 1)) {
-		die(_("incompatible program modes\n"));
-	}
+	/* check options compatibility for program mode and output format */
+	check_compatibility(ChkMode, opt.mode);
+	check_compatibility(ChkFmt, (opt.fmt | ext_format_bits));
+	check_compatibility(ChkFmt, ((opt.flags & OPT_FMT_MODIFIERS) | ext_format_bits));
 
-	ff = (opt.printf_str ? 1 : 0) | (opt.template_file ? 2 : 0) | (opt.fmt ? 4 : 0);
-	if ((opt.fmt & (opt.fmt - 1)) || (ff & (ff - 1))) {
-		die(_("too many formatting options\n"));
-	}
-
-	if (!opt.crc_accept) opt.crc_accept = file_mask_new_from_list(".sfv");
-
-	if (opt.openssl_mask) rhash_set_openssl_mask(opt.openssl_mask);
+	if (!opt.crc_accept)
+		opt.crc_accept = file_mask_new_from_list(".sfv");
+	if (opt.openssl_mask)
+		rhash_set_openssl_mask(opt.openssl_mask);
 }
 
 static struct parsed_cmd_line_t cmd_line;
@@ -1065,7 +1104,7 @@ static void cmd_line_destroy(void)
  *
  * @param argv program arguments
  */
-void read_options(int argc, char *argv[])
+void read_options(int argc, char* argv[])
 {
 	opt.mem = rsh_vector_new_simple();
 	opt.search_data = file_search_data_new();
@@ -1086,7 +1125,8 @@ void read_options(int argc, char *argv[])
 	IF_WINDOWS(setup_console());
 	setup_output();
 
-	apply_cmdline_options(&cmd_line); /* process the rest of command options */
+	apply_cmdline_options(&cmd_line); /* process the rest of command line options */
+	options_destroy(&conf_opt);
 
 	/* options were processed, so we don't need them any more */
 	rsh_remove_exit_handler();
