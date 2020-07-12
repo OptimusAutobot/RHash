@@ -1,0 +1,25 @@
+# The project language
+language: c
+
+matrix:
+  include:
+
+    - os: linux
+      compiler: gcc
+      sudo: false
+      env:
+        - CONFIGURE_FLAGS="--disable-static --disable-openssl"
+
+    - os: osx
+      osx_image: xcode6.4
+      compiler: clang
+      sudo: false
+      env:
+        - CONFIGURE_FLAGS="--enable-static --disable-openssl"
+
+script:
+  - ./configure --sysconfdir=/etc $CONFIGURE_FLAGS
+  - make
+  - test -f ./rhash || cat config.mak librhash/config.mak config.log
+  - make -C librhash print-info test
+  - make test

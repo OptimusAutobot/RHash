@@ -1,0 +1,7 @@
+*.[ao]
+*.exe
+*.dll
+*.def
+*.so
+*.so.0
+*.log
