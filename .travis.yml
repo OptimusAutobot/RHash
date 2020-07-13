@@ -3,6 +3,15 @@ language: c
 
 matrix:
   include:
+    - os: linux
+      compiler: gcc
+      sudo: false
+      env:
+        - CONFIGURE_FLAGS="--enable-static --enable-openssl-runtime"
+      addons:
+        apt:
+          packages:
+            - libssl-dev
 
     - os: linux
       compiler: gcc
@@ -17,7 +26,105 @@ matrix:
       env:
         - CONFIGURE_FLAGS="--enable-static --disable-openssl"
 
+    - os: osx
+      osx_image: xcode7.3
+      compiler: clang
+      sudo: false
+      env:
+        - CONFIGURE_FLAGS="--enable-static --enable-openssl-runtime --extra-cflags=-I/usr/local/opt/openssl/include"
+
+    - os: osx
+      compiler: clang
+      sudo: false
+      env:
+        - CONFIGURE_FLAGS="--disable-static --enable-openssl-runtime --extra-cflags=-I/usr/local/opt/openssl/include"
+
+    - os: linux
+      compiler: arm-linux-gnueabi-gcc
+      sudo: required # enable FS with binfmt support
+      env:
+        - CONFIGURE_FLAGS="--enable-static --disable-openssl --disable-gettext"
+      addons:
+        apt:
+          packages:
+            - gcc-arm-linux-gnueabi libc-dev-armel-cross
+            - qemu qemu-user-static binfmt-support
+
+    - os: linux
+      compiler: powerpc-linux-gnu-gcc
+      sudo: required
+      env:
+        - CONFIGURE_FLAGS="--enable-static --disable-openssl --disable-gettext"
+      addons:
+        apt:
+          packages:
+            - gcc-powerpc-linux-gnu libc-dev-powerpc-cross
+            - qemu qemu-user-static binfmt-support
+
+    - os: linux
+      compiler: powerpc64-linux-gnu-gcc
+      sudo: required
+      env:
+        - CONFIGURE_FLAGS="--enable-static --disable-openssl --disable-gettext"
+      addons:
+        apt:
+          sources:
+            - sourceline: 'deb http://archive.ubuntu.com/ubuntu/ xenial main universe'
+            - sourceline: 'deb http://archive.ubuntu.com/ubuntu/ xenial-updates main universe'
+          packages:
+            - gcc-powerpc64-linux-gnu libc-dev-ppc64-cross
+            - qemu qemu-user-static binfmt-support
+
+    - os: linux
+      compiler: mips64el-linux-gnuabi64-gcc
+      sudo: required
+      env:
+        - CONFIGURE_FLAGS="--enable-static --disable-openssl --disable-gettext"
+      addons:
+        apt:
+          sources:
+            - sourceline: 'deb http://archive.ubuntu.com/ubuntu/ xenial main universe'
+            - sourceline: 'deb http://archive.ubuntu.com/ubuntu/ xenial-updates main universe'
+          packages:
+            - gcc-mips64el-linux-gnuabi64 libc-dev-mips64el-cross
+            - qemu qemu-user-static binfmt-support
+
+    - os: linux
+      compiler: i686-w64-mingw32-gcc
+      sudo: false
+      env:
+        - CONFIGURE_FLAGS="--target=i686-w64-mingw32 --enable-static --enable-lib-shared --disable-openssl --disable-gettext"
+      addons:
+        apt:
+          packages:
+            - dpkg gcc-mingw-w64-i686 wine1.6-i386
+      script:
+        - cd rhash
+        - ./configure --sysconfdir=/etc $CONFIGURE_FLAGS
+        - make || ! cat config.mak librhash/config.mak config.log
+        - make -C librhash test_static.exe && wine librhash/test_static.exe --info
+        - wine librhash/test_static.exe
+        - make install DESTDIR=$PWD/results
+        - /usr/bin/find results/ -exec ls -ld '{}' ';'
+
+    - os: linux
+      compiler: x86_64-w64-mingw32-gcc
+      sudo: false
+      env:
+        - CONFIGURE_FLAGS="--target=x86_64-w64-mingw32 --enable-static --enable-lib-shared --disable-openssl --disable-gettext"
+      script:
+        - cd rhash
+        - ./configure --sysconfdir=/etc $CONFIGURE_FLAGS
+        - make || ! cat config.mak librhash/config.mak config.log
+        - make -C librhash test_static.exe && wine librhash/test_static.exe --info
+        - wine librhash/test_static.exe
+      addons:
+        apt:
+          packages:
+            - dpkg gcc-mingw-w64-x86-64 wine1.6-amd64
+
 script:
+  - cd rhash
   - ./configure --sysconfdir=/etc $CONFIGURE_FLAGS
   - make
   - test -f ./rhash || cat config.mak librhash/config.mak config.log
