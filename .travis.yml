@@ -3,43 +3,58 @@ language: c
 
 matrix:
   include:
-    - os: linux
+    - name: "linux shared debug ssl-runtime"
+      os: linux
+      dist: xenial
       compiler: gcc
       sudo: false
       env:
-        - CONFIGURE_FLAGS="--enable-static --enable-openssl-runtime"
+        - CONFIGURE_FLAGS="--disable-static --enable-openssl=runtime --enable-debug"
       addons:
         apt:
           packages:
             - libssl-dev
 
-    - os: linux
+    - name: "linux static"
+      os: linux
       compiler: gcc
       sudo: false
       env:
-        - CONFIGURE_FLAGS="--disable-static --disable-openssl"
+        - CONFIGURE_FLAGS="--enable-static --disable-openssl"
 
-    - os: osx
+    - name: "xcode-6.4 static"
+      os: osx
       osx_image: xcode6.4
       compiler: clang
       sudo: false
       env:
         - CONFIGURE_FLAGS="--enable-static --disable-openssl"
 
-    - os: osx
+    - name: "xcode-7.3 static ssl"
+      os: osx
       osx_image: xcode7.3
       compiler: clang
       sudo: false
       env:
-        - CONFIGURE_FLAGS="--enable-static --enable-openssl-runtime --extra-cflags=-I/usr/local/opt/openssl/include"
+        - CONFIGURE_FLAGS="--enable-static --enable-openssl --extra-cflags=-I/usr/local/opt/openssl/include --extra-ldflags=-L/usr/local/opt/openssl/lib"
 
-    - os: osx
+    - name: "xcode-def shared ssl"
+      os: osx
       compiler: clang
       sudo: false
       env:
-        - CONFIGURE_FLAGS="--disable-static --enable-openssl-runtime --extra-cflags=-I/usr/local/opt/openssl/include"
+        - CONFIGURE_FLAGS="--disable-static --enable-openssl --extra-cflags=-I/usr/local/opt/openssl/include --extra-ldflags=-L/usr/local/opt/openssl/lib"
 
-    - os: linux
+    - name: "xcode-12 shared debug ssl-runtime"
+      os: osx
+      osx_image: xcode12
+      compiler: clang
+      sudo: false
+      env:
+        - CONFIGURE_FLAGS="--disable-static --enable-debug --enable-openssl=runtime --extra-cflags=-I/usr/local/opt/openssl/include"
+
+    - name: "arm-linux static"
+      os: linux
       compiler: arm-linux-gnueabi-gcc
       sudo: required # enable FS with binfmt support
       env:
@@ -50,7 +65,8 @@ matrix:
             - gcc-arm-linux-gnueabi libc-dev-armel-cross
             - qemu qemu-user-static binfmt-support
 
-    - os: linux
+    - name: "ppc-linux static"
+      os: linux
       compiler: powerpc-linux-gnu-gcc
       sudo: required
       env:
@@ -61,7 +77,8 @@ matrix:
             - gcc-powerpc-linux-gnu libc-dev-powerpc-cross
             - qemu qemu-user-static binfmt-support
 
-    - os: linux
+    - name: "ppc64-linux static"
+      os: linux
       compiler: powerpc64-linux-gnu-gcc
       sudo: required
       env:
@@ -75,7 +92,8 @@ matrix:
             - gcc-powerpc64-linux-gnu libc-dev-ppc64-cross
             - qemu qemu-user-static binfmt-support
 
-    - os: linux
+    - name: "mips64el-linux static"
+      os: linux
       compiler: mips64el-linux-gnuabi64-gcc
       sudo: required
       env:
@@ -89,7 +107,8 @@ matrix:
             - gcc-mips64el-linux-gnuabi64 libc-dev-mips64el-cross
             - qemu qemu-user-static binfmt-support
 
-    - os: linux
+    - name: "mingw64 static"
+      os: linux
       compiler: i686-w64-mingw32-gcc
       sudo: false
       env:
@@ -107,7 +126,8 @@ matrix:
         - make install DESTDIR=$PWD/results
         - /usr/bin/find results/ -exec ls -ld '{}' ';'
 
-    - os: linux
+    - name: "mingw32 static"
+      os: linux
       compiler: x86_64-w64-mingw32-gcc
       sudo: false
       env:
