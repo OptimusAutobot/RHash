@@ -5,7 +5,7 @@ matrix:
   include:
     - name: "linux shared debug ssl-runtime"
       os: linux
-      dist: xenial
+      dist: bionic
       compiler: gcc
       sudo: false
       env:
@@ -55,6 +55,7 @@ matrix:
 
     - name: "arm-linux static"
       os: linux
+      dist: bionic
       compiler: arm-linux-gnueabi-gcc
       sudo: required # enable FS with binfmt support
       env:
@@ -67,6 +68,7 @@ matrix:
 
     - name: "ppc-linux static"
       os: linux
+      dist: bionic
       compiler: powerpc-linux-gnu-gcc
       sudo: required
       env:
@@ -79,6 +81,7 @@ matrix:
 
     - name: "ppc64-linux static"
       os: linux
+      dist: bionic
       compiler: powerpc64-linux-gnu-gcc
       sudo: required
       env:
@@ -94,6 +97,7 @@ matrix:
 
     - name: "mips64el-linux static"
       os: linux
+      dist: bionic
       compiler: mips64el-linux-gnuabi64-gcc
       sudo: required
       env:
@@ -109,6 +113,7 @@ matrix:
 
     - name: "mingw64 static"
       os: linux
+      dist: bionic
       compiler: i686-w64-mingw32-gcc
       sudo: false
       env:
@@ -128,6 +133,7 @@ matrix:
 
     - name: "mingw32 static"
       os: linux
+      dist: bionic
       compiler: x86_64-w64-mingw32-gcc
       sudo: false
       env:
