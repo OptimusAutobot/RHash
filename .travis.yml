@@ -1,13 +1,12 @@
 # The project language
+os: linux
+dist: bionic
 language: c
 
-matrix:
+jobs:
   include:
     - name: "linux shared debug ssl-runtime"
-      os: linux
-      dist: bionic
       compiler: gcc
-      sudo: false
       env:
         - CONFIGURE_FLAGS="--disable-static --enable-openssl=runtime --enable-debug"
       addons:
@@ -16,9 +15,7 @@ matrix:
             - libssl-dev
 
     - name: "linux static"
-      os: linux
       compiler: gcc
-      sudo: false
       env:
         - CONFIGURE_FLAGS="--enable-static --disable-openssl"
 
@@ -26,7 +23,6 @@ matrix:
       os: osx
       osx_image: xcode6.4
       compiler: clang
-      sudo: false
       env:
         - CONFIGURE_FLAGS="--enable-static --disable-openssl"
 
@@ -34,14 +30,12 @@ matrix:
       os: osx
       osx_image: xcode7.3
       compiler: clang
-      sudo: false
       env:
         - CONFIGURE_FLAGS="--enable-static --enable-openssl --extra-cflags=-I/usr/local/opt/openssl/include --extra-ldflags=-L/usr/local/opt/openssl/lib"
 
     - name: "xcode-def shared ssl"
       os: osx
       compiler: clang
-      sudo: false
       env:
         - CONFIGURE_FLAGS="--disable-static --enable-openssl --extra-cflags=-I/usr/local/opt/openssl/include --extra-ldflags=-L/usr/local/opt/openssl/lib"
 
@@ -49,15 +43,11 @@ matrix:
       os: osx
       osx_image: xcode12
       compiler: clang
-      sudo: false
       env:
         - CONFIGURE_FLAGS="--disable-static --enable-debug --enable-openssl=runtime --extra-cflags=-I/usr/local/opt/openssl/include"
 
     - name: "arm-linux static"
-      os: linux
-      dist: bionic
       compiler: arm-linux-gnueabi-gcc
-      sudo: required # enable FS with binfmt support
       env:
         - CONFIGURE_FLAGS="--enable-static --disable-openssl --disable-gettext"
       addons:
@@ -67,10 +57,7 @@ matrix:
             - qemu qemu-user-static binfmt-support
 
     - name: "ppc-linux static"
-      os: linux
-      dist: bionic
       compiler: powerpc-linux-gnu-gcc
-      sudo: required
       env:
         - CONFIGURE_FLAGS="--enable-static --disable-openssl --disable-gettext"
       addons:
@@ -80,48 +67,33 @@ matrix:
             - qemu qemu-user-static binfmt-support
 
     - name: "ppc64-linux static"
-      os: linux
-      dist: bionic
       compiler: powerpc64-linux-gnu-gcc
-      sudo: required
       env:
         - CONFIGURE_FLAGS="--enable-static --disable-openssl --disable-gettext"
       addons:
         apt:
-          sources:
-            - sourceline: 'deb http://archive.ubuntu.com/ubuntu/ xenial main universe'
-            - sourceline: 'deb http://archive.ubuntu.com/ubuntu/ xenial-updates main universe'
           packages:
             - gcc-powerpc64-linux-gnu libc-dev-ppc64-cross
             - qemu qemu-user-static binfmt-support
 
     - name: "mips64el-linux static"
-      os: linux
-      dist: bionic
       compiler: mips64el-linux-gnuabi64-gcc
-      sudo: required
       env:
         - CONFIGURE_FLAGS="--enable-static --disable-openssl --disable-gettext"
       addons:
         apt:
-          sources:
-            - sourceline: 'deb http://archive.ubuntu.com/ubuntu/ xenial main universe'
-            - sourceline: 'deb http://archive.ubuntu.com/ubuntu/ xenial-updates main universe'
           packages:
             - gcc-mips64el-linux-gnuabi64 libc-dev-mips64el-cross
             - qemu qemu-user-static binfmt-support
 
-    - name: "mingw64 static"
-      os: linux
-      dist: bionic
+    - name: "mingw32 static"
       compiler: i686-w64-mingw32-gcc
-      sudo: false
       env:
         - CONFIGURE_FLAGS="--target=i686-w64-mingw32 --enable-static --enable-lib-shared --disable-openssl --disable-gettext"
       addons:
         apt:
           packages:
-            - dpkg gcc-mingw-w64-i686 wine1.6-i386
+            - dpkg gcc-mingw-w64-i686 binfmt-support wine-stable wine32
       script:
         - cd rhash
         - ./configure --sysconfdir=/etc $CONFIGURE_FLAGS
@@ -131,23 +103,20 @@ matrix:
         - make install DESTDIR=$PWD/results
         - /usr/bin/find results/ -exec ls -ld '{}' ';'
 
-    - name: "mingw32 static"
-      os: linux
-      dist: bionic
+    - name: "mingw64 static"
       compiler: x86_64-w64-mingw32-gcc
-      sudo: false
       env:
         - CONFIGURE_FLAGS="--target=x86_64-w64-mingw32 --enable-static --enable-lib-shared --disable-openssl --disable-gettext"
+      addons:
+        apt:
+          packages:
+            - dpkg gcc-mingw-w64-x86-64 binfmt-support wine-stable wine64
       script:
         - cd rhash
         - ./configure --sysconfdir=/etc $CONFIGURE_FLAGS
         - make || ! cat config.mak librhash/config.mak config.log
         - make -C librhash test_static.exe && wine librhash/test_static.exe --info
         - wine librhash/test_static.exe
-      addons:
-        apt:
-          packages:
-            - dpkg gcc-mingw-w64-x86-64 wine1.6-amd64
 
 script:
   - cd rhash
